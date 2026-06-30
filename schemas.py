@@ -61,6 +61,10 @@ class DownloadResponse(BaseModel):
     stream_url: Optional[str] = Field(None, description="URL para streaming")
     file_size: Optional[int] = Field(None, description="Tamanho do arquivo em bytes")
     duration: Optional[int] = Field(None, description="Duração do áudio em segundos")
+    format: Optional[str] = Field(None, description="Formato do áudio (ex: m4a, webm)")
+    codec: Optional[str] = Field(None, description="Codec do áudio (ex: mp4a.40.2, opus)")
+    ext: Optional[str] = Field(None, description="Extensão do arquivo")
+    is_video_url: Optional[bool] = Field(None, description="Indica se a URL é do vídeo original")
 
 
 class ErrorResponse(BaseModel):

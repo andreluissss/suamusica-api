@@ -197,13 +197,13 @@ class YouTubeService:
     async def get_audio_stream_info(self, video_id: str) -> dict:
         """
         Obtém informações para streaming de áudio sem download completo.
-        Usa abordagem mais robusta para funcionar em ambientes como Railway.
+        Retorna URL de streaming do YouTube para player específico no app.
         
         Args:
             video_id: ID do vídeo
             
         Returns:
-            Dicionário com informações de streaming
+            Dicionário com informações de streaming incluindo URL e formato
             
         Raises:
             Exception: Erro ao obter informações
@@ -216,7 +216,7 @@ class YouTubeService:
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
-                    'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                    'format': 'bestaudio/best',
                     'extract_flat': False,
                 }
                 
@@ -224,47 +224,62 @@ class YouTubeService:
                     info = ydl.extract_info(url, download=False)
                     
                     if info:
-                        # Encontra a melhor URL de áudio com múltiplas estratégias
+                        # Encontra a melhor URL de áudio com informações completas
                         audio_url = None
+                        audio_format = None
+                        audio_codec = None
+                        audio_ext = None
                         
-                        # Estratégia 1: Buscar formato de áudio puro
+                        # Buscar formatos de áudio em ordem de preferência
                         for format in info.get('formats', []):
                             ext = format.get('ext', '')
                             acodec = format.get('acodec', '')
                             vcodec = format.get('vcodec', '')
+                            format_url = format.get('url')
                             
-                            # Preferir m4a ou mp3 com áudio e sem vídeo
-                            if ext in ['m4a', 'mp3'] and acodec != 'none' and vcodec == 'none':
-                                audio_url = format.get('url')
-                                if audio_url:
+                            # Preferir formatos de áudio puro (sem vídeo)
+                            if acodec != 'none' and vcodec == 'none':
+                                if not audio_url:
+                                    audio_url = format_url
+                                    audio_format = format.get('format', '')
+                                    audio_codec = acodec
+                                    audio_ext = ext
+                                
+                                # Preferir m4a/AAC (mais compatível)
+                                if ext == 'm4a' and acodec == 'mp4a.40.2':
+                                    audio_url = format_url
+                                    audio_format = format.get('format', '')
+                                    audio_codec = acodec
+                                    audio_ext = ext
                                     break
                         
-                        # Estratégia 2: Buscar qualquer formato com áudio e sem vídeo
-                        if not audio_url:
-                            for format in info.get('formats', []):
-                                if format.get('acodec') != 'none' and format.get('vcodec') == 'none':
-                                    audio_url = format.get('url')
-                                    if audio_url:
-                                        break
-                        
-                        # Estratégia 3: Fallback para o melhor formato de áudio disponível
+                        # Se não encontrou áudio puro, busca melhor formato com áudio
                         if not audio_url:
                             for format in info.get('formats', []):
                                 if format.get('acodec') != 'none':
                                     audio_url = format.get('url')
-                                    if audio_url:
-                                        break
+                                    audio_format = format.get('format', '')
+                                    audio_codec = format.get('acodec', '')
+                                    audio_ext = format.get('ext', '')
+                                    break
                         
-                        # Se não encontrar URL de streaming, retorna URL do vídeo
+                        # Se ainda não encontrou, usa URL do vídeo
                         if not audio_url:
                             audio_url = url
+                            audio_format = 'video'
+                            audio_codec = 'unknown'
+                            audio_ext = 'mp4'
                         
                         return {
                             'stream_url': audio_url,
                             'duration': info.get('duration', 0),
                             'title': info.get('title', ''),
                             'thumbnail': info.get('thumbnail', ''),
-                            'is_video_url': audio_url == url  # Flag se é URL do vídeo original
+                            'format': audio_format,
+                            'codec': audio_codec,
+                            'ext': audio_ext,
+                            'is_video_url': audio_url == url,
+                            'filesize': info.get('filesize', 0) or 0
                         }
                     
                 raise Exception("Não foi possível extrair informações de streaming")

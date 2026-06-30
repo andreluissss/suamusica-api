@@ -135,14 +135,18 @@ async def download_audio(request: DownloadRequest):
                 duration=duration
             )
         else:
-            # Modo stream: retorna URL de streaming direto
+            # Modo stream: retorna URL de streaming direto com informações de formato
             stream_info = await youtube_service.get_audio_stream_info(request.video_id)
             
             return DownloadResponse(
                 success=True,
                 message="Informações de streaming obtidas com sucesso",
                 stream_url=stream_info['stream_url'],
-                duration=stream_info['duration']
+                duration=stream_info['duration'],
+                format=stream_info.get('format'),
+                codec=stream_info.get('codec'),
+                ext=stream_info.get('ext'),
+                is_video_url=stream_info.get('is_video_url')
             )
             
     except Exception as e:
