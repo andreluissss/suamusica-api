@@ -200,16 +200,16 @@ class YouTubeService:
         self, 
         video_id: str, 
         quality: AudioQuality = AudioQuality.HIGH
-    ):
+    ) -> tuple[str, int]:
         """
-        Baixa áudio e retorna como generator para streaming direto ao cliente.
+        Baixa áudio e retorna caminho do arquivo para streaming.
         
         Args:
             video_id: ID do vídeo
             quality: Qualidade do áudio
             
-        Yields:
-            Chunks de bytes do arquivo de áudio
+        Returns:
+            Tupla com (caminho do arquivo, duração)
             
         Raises:
             Exception: Erro no download
@@ -217,7 +217,7 @@ class YouTubeService:
         loop = asyncio.get_event_loop()
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        def _download_and_stream():
+        def _download():
             try:
                 ydl_opts = self._get_ydl_options_audio(quality, DownloadMode.DOWNLOAD)
                 
@@ -227,14 +227,9 @@ class YouTubeService:
                     if info:
                         filepath = str(self.download_dir / f"{video_id}.mp3")
                         
-                        # Lê o arquivo em chunks e retorna
                         if os.path.exists(filepath):
-                            with open(filepath, 'rb') as f:
-                                while chunk := f.read(8192):
-                                    yield chunk
-                            
-                            # Remove arquivo após streaming
-                            os.remove(filepath)
+                            duration = info.get('duration', 0)
+                            return filepath, duration
                         else:
                             raise Exception("Arquivo não foi criado")
                     
@@ -242,7 +237,7 @@ class YouTubeService:
             except Exception as e:
                 raise Exception(f"Erro ao fazer streaming de áudio: {str(e)}")
         
-        return await loop.run_in_executor(None, _download_and_stream)
+        return await loop.run_in_executor(None, _download)
     
     async def get_audio_stream_info(self, video_id: str) -> dict:
         """
