@@ -46,6 +46,7 @@ class YouTubeService:
     def _get_ydl_options_audio(self, quality: AudioQuality, mode: DownloadMode) -> dict:
         """
         Configurações do yt-dlp para download/conversão de áudio.
+        Simplificado para melhor compatibilidade com Railway.
         
         Args:
             quality: Qualidade do áudio desejada
@@ -64,7 +65,7 @@ class YouTubeService:
         bitrate = quality_map.get(quality, '320')
         
         return {
-            'format': f'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -74,6 +75,7 @@ class YouTubeService:
             'quiet': True,
             'no_warnings': True,
             'keepvideo': False,
+            'ignoreerrors': True,
         }
     
     async def search_videos(self, query: str, max_results: int = 10) -> List[VideoMetadata]:
