@@ -197,7 +197,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             success=False,
             error=exc.detail,
             detail=f"HTTP {exc.status_code}"
-        ).dict()
+        ).model_dump()
     )
 
 
@@ -210,7 +210,7 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
             success=False,
             error="Erro de validação",
             detail=str(exc)
-        ).dict()
+        ).model_dump()
     )
 
 
@@ -223,7 +223,7 @@ async def general_exception_handler(request: Request, exc: Exception):
             success=False,
             error="Erro interno do servidor",
             detail=str(exc)
-        ).dict()
+        ).model_dump()
     )
 
 
