@@ -4,7 +4,7 @@ Implementa endpoints de busca, download e streaming.
 """
 
 from fastapi import FastAPI, HTTPException, status, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from typing import Optional
@@ -95,6 +95,46 @@ async def search_videos(request: SearchRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao buscar vídeos: {str(e)}"
+        )
+
+
+@app.get(
+    "/stream/{video_id}",
+    tags=["Download"]
+)
+async def stream_audio(video_id: str, quality: AudioQuality = AudioQuality.HIGH):
+    """
+    Stream de áudio diretamente ao cliente sem salvar no disco.
+    
+    Args:
+        video_id: ID do vídeo no YouTube
+        quality: Qualidade do áudio (high, medium, low)
+        
+    Returns:
+        StreamingResponse com o arquivo de áudio MP3
+        
+    Raises:
+        HTTPException: Erro no streaming
+    """
+    try:
+        # Obtém generator de streaming
+        audio_generator = await youtube_service.stream_audio_to_client(
+            video_id=video_id,
+            quality=quality
+        )
+        
+        return StreamingResponse(
+            audio_generator,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": f"attachment; filename={video_id}.mp3"
+            }
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao fazer streaming de áudio: {str(e)}"
         )
 
 

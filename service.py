@@ -196,6 +196,54 @@ class YouTubeService:
         
         return await loop.run_in_executor(None, _download)
     
+    async def stream_audio_to_client(
+        self, 
+        video_id: str, 
+        quality: AudioQuality = AudioQuality.HIGH
+    ):
+        """
+        Baixa áudio e retorna como generator para streaming direto ao cliente.
+        
+        Args:
+            video_id: ID do vídeo
+            quality: Qualidade do áudio
+            
+        Yields:
+            Chunks de bytes do arquivo de áudio
+            
+        Raises:
+            Exception: Erro no download
+        """
+        loop = asyncio.get_event_loop()
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        def _download_and_stream():
+            try:
+                ydl_opts = self._get_ydl_options_audio(quality, DownloadMode.DOWNLOAD)
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if info:
+                        filepath = str(self.download_dir / f"{video_id}.mp3")
+                        
+                        # Lê o arquivo em chunks e retorna
+                        if os.path.exists(filepath):
+                            with open(filepath, 'rb') as f:
+                                while chunk := f.read(8192):
+                                    yield chunk
+                            
+                            # Remove arquivo após streaming
+                            os.remove(filepath)
+                        else:
+                            raise Exception("Arquivo não foi criado")
+                    
+                raise Exception("Não foi possível extrair informações do vídeo")
+            except Exception as e:
+                raise Exception(f"Erro ao fazer streaming de áudio: {str(e)}")
+        
+        return await loop.run_in_executor(None, _download_and_stream)
+    
     async def get_audio_stream_info(self, video_id: str) -> dict:
         """
         Obtém informações para streaming de áudio sem download completo.
