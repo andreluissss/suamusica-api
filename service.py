@@ -42,23 +42,6 @@ class YouTubeService:
             'noplaylist': False,
         }
     
-    def _get_ydl_options_audio(self) -> dict:
-        """
-        Configurações do yt-dlp para download de áudio sem conversão.
-        Baixa o áudio no formato original (M4A) sem FFmpeg.
-        
-        Returns:
-            Dicionário com configurações do yt-dlp
-        """
-        return {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',
-            'outtmpl': str(self.download_dir / '%(id)s.%(ext)s'),
-            'quiet': True,
-            'no_warnings': True,
-            'keepvideo': False,
-            'ignoreerrors': True,
-        }
-    
     async def search_videos(self, query: str, max_results: int = 10) -> List[VideoMetadata]:
         """
         Busca vídeos no YouTube de forma assíncrona.
@@ -130,79 +113,3 @@ class YouTubeService:
             videos.append(video)
         
         return videos
-    
-    async def download_audio(self, video_id: str) -> tuple[str, int, int]:
-        """
-        Download assíncrono de áudio no formato original (M4A).
-        Não usa FFmpeg para conversão.
-        
-        Args:
-            video_id: ID do vídeo
-            
-        Returns:
-            Tupla com (caminho do arquivo, tamanho em bytes, duração)
-            
-        Raises:
-            Exception: Erro no download
-        """
-        loop = asyncio.get_event_loop()
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        def _download():
-            try:
-                ydl_opts = self._get_ydl_options_audio()
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    
-                    if info:
-                        # Caminho do arquivo baixado (será M4A)
-                        filepath = str(self.download_dir / f"{video_id}.m4a")
-                        
-                        # Tenta encontrar o arquivo baixado
-                        if not os.path.exists(filepath):
-                            # O yt-dlp pode ter usado outra extensão
-                            for ext in ['m4a', 'webm', 'mp4']:
-                                test_path = str(self.download_dir / f"{video_id}.{ext}")
-                                if os.path.exists(test_path):
-                                    filepath = test_path
-                                    break
-                        
-                        # Tamanho do arquivo
-                        file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
-                        
-                        # Duração
-                        duration = info.get('duration', 0)
-                        
-                        return filepath, file_size, duration
-                    
-                raise Exception("Não foi possível extrair informações do vídeo")
-            except Exception as e:
-                raise Exception(f"Erro ao baixar áudio: {str(e)}")
-        
-        return await loop.run_in_executor(None, _download)
-    
-    async def cleanup_old_files(self, max_age_hours: int = 24):
-        """
-        Remove arquivos antigos do diretório de downloads.
-        
-        Args:
-            max_age_hours: Idade máxima em horas para manter arquivos
-        """
-        loop = asyncio.get_event_loop()
-        
-        def _cleanup():
-            try:
-                import time
-                current_time = time.time()
-                max_age_seconds = max_age_hours * 3600
-                
-                for file_path in self.download_dir.glob('*'):
-                    if file_path.is_file():
-                        file_age = current_time - file_path.stat().st_mtime
-                        if file_age > max_age_seconds:
-                            file_path.unlink()
-            except Exception:
-                pass  # Silencioso para não interromper operações principais
-        
-        await loop.run_in_executor(None, _cleanup)

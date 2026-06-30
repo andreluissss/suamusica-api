@@ -32,21 +32,6 @@ class SearchResponse(BaseModel):
     total: int = Field(..., description="Total de resultados")
 
 
-class DownloadRequest(BaseModel):
-    """Request para download de áudio."""
-    video_id: str = Field(..., description="ID do vídeo no YouTube")
-
-
-class DownloadResponse(BaseModel):
-    """Response do download."""
-    success: bool = Field(..., description="Status da operação")
-    message: str = Field(..., description="Mensagem de status")
-    download_url: Optional[str] = Field(None, description="URL para download do arquivo")
-    file_size: Optional[int] = Field(None, description="Tamanho do arquivo em bytes")
-    duration: Optional[int] = Field(None, description="Duração do áudio em segundos")
-    format: Optional[str] = Field(None, description="Formato do arquivo (m4a)")
-
-
 class ErrorResponse(BaseModel):
     """Modelo de resposta de erro."""
     success: bool = Field(False, description="Sempre False para erros")

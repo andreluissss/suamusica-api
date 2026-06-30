@@ -14,8 +14,6 @@ from dotenv import load_dotenv
 from schemas import (
     SearchRequest, 
     SearchResponse, 
-    DownloadRequest,
-    DownloadResponse,
     ErrorResponse,
     VideoMetadata
 )
@@ -26,8 +24,8 @@ load_dotenv()
 
 # Inicialização da aplicação
 app = FastAPI(
-    title="YouTube Media Processor API",
-    description="API para busca, download e streaming de áudio do YouTube",
+    title="YouTube Search API",
+    description="API para busca de vídeos do YouTube. O app deve usar biblioteca própria para download.",
     version="1.0.0"
 )
 
@@ -96,83 +94,6 @@ async def search_videos(request: SearchRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao buscar vídeos: {str(e)}"
         )
-
-
-@app.post(
-    "/download",
-    response_model=DownloadResponse,
-    tags=["Download"]
-)
-async def download_audio(request: DownloadRequest):
-    """
-    Download de áudio em M4A (formato original do YouTube).
-    Não usa conversão FFmpeg para funcionar no Railway.
-    
-    Args:
-        request: Objeto com ID do vídeo
-        
-    Returns:
-        DownloadResponse com informações do arquivo baixado
-        
-    Raises:
-        HTTPException: Erro no download
-    """
-    try:
-        # Baixa o arquivo no formato original (M4A)
-        filepath, file_size, duration = await youtube_service.download_audio(
-            video_id=request.video_id
-        )
-        
-        # Retorna URL para download do arquivo
-        filename = os.path.basename(filepath)
-        download_url = f"/files/{filename}"
-        
-        return DownloadResponse(
-            success=True,
-            message="Áudio baixado com sucesso (formato M4A)",
-            download_url=download_url,
-            file_size=file_size,
-            duration=duration,
-            format="m4a"
-        )
-            
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao processar áudio: {str(e)}"
-        )
-
-
-@app.get(
-    "/files/{filename}",
-    tags=["Files"]
-)
-async def get_file(filename: str):
-    """
-    Endpoint para download de arquivos processados.
-    
-    Args:
-        filename: Nome do arquivo (ex: video_id.m4a)
-        
-    Returns:
-        FileResponse com o arquivo solicitado
-        
-    Raises:
-        HTTPException: Arquivo não encontrado
-    """
-    file_path = youtube_service.download_dir / filename
-    
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Arquivo não encontrado"
-        )
-    
-    return FileResponse(
-        path=str(file_path),
-        media_type="audio/mp4",
-        filename=filename
-    )
 
 
 @app.exception_handler(HTTPException)
