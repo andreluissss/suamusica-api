@@ -196,49 +196,6 @@ class YouTubeService:
         
         return await loop.run_in_executor(None, _download)
     
-    async def stream_audio_to_client(
-        self, 
-        video_id: str, 
-        quality: AudioQuality = AudioQuality.HIGH
-    ) -> tuple[str, int]:
-        """
-        Baixa áudio e retorna caminho do arquivo para streaming.
-        
-        Args:
-            video_id: ID do vídeo
-            quality: Qualidade do áudio
-            
-        Returns:
-            Tupla com (caminho do arquivo, duração)
-            
-        Raises:
-            Exception: Erro no download
-        """
-        loop = asyncio.get_event_loop()
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        def _download():
-            try:
-                ydl_opts = self._get_ydl_options_audio(quality, DownloadMode.DOWNLOAD)
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    
-                    if info:
-                        filepath = str(self.download_dir / f"{video_id}.mp3")
-                        
-                        if os.path.exists(filepath):
-                            duration = info.get('duration', 0)
-                            return filepath, duration
-                        else:
-                            raise Exception("Arquivo não foi criado")
-                    
-                raise Exception("Não foi possível extrair informações do vídeo")
-            except Exception as e:
-                raise Exception(f"Erro ao fazer streaming de áudio: {str(e)}")
-        
-        return await loop.run_in_executor(None, _download)
-    
     async def get_audio_stream_info(self, video_id: str) -> dict:
         """
         Obtém informações para streaming de áudio sem download completo.

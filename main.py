@@ -3,8 +3,8 @@ API RESTful para scraping e processamento de mídia do YouTube.
 Implementa endpoints de busca, download e streaming.
 """
 
-from fastapi import FastAPI, HTTPException, status, Request, BackgroundTasks, Depends
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, status, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from typing import Optional
@@ -95,57 +95,6 @@ async def search_videos(request: SearchRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao buscar vídeos: {str(e)}"
-        )
-
-
-@app.get(
-    "/stream/{video_id}",
-    tags=["Download"]
-)
-async def stream_audio(video_id: str, quality: AudioQuality = AudioQuality.HIGH, background_tasks: BackgroundTasks = Depends()):
-    """
-    Stream de áudio diretamente ao cliente sem salvar no disco.
-    
-    Args:
-        video_id: ID do vídeo no YouTube
-        quality: Qualidade do áudio (high, medium, low)
-        background_tasks: FastAPI BackgroundTasks for cleanup
-        
-    Returns:
-        FileResponse com o arquivo de áudio MP3
-        
-    Raises:
-        HTTPException: Erro no streaming
-    """
-    try:
-        # Baixa áudio temporariamente
-        filepath, duration = await youtube_service.stream_audio_to_client(
-            video_id=video_id,
-            quality=quality
-        )
-        
-        # Função para limpar arquivo após envio
-        def cleanup():
-            try:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-            except:
-                pass
-        
-        # Agenda cleanup
-        background_tasks.add_task(cleanup)
-        
-        # Retorna arquivo
-        return FileResponse(
-            filepath,
-            media_type="audio/mpeg",
-            filename=f"{video_id}.mp3"
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao fazer streaming de áudio: {str(e)}"
         )
 
 
