@@ -14,12 +14,12 @@ from dotenv import load_dotenv
 from schemas import (
     SearchRequest, 
     SearchResponse, 
-    DownloadRequest, 
-    DownloadResponse, 
+    DownloadRequest,
+    DownloadResponse,
     ErrorResponse,
     VideoMetadata
 )
-from service import YouTubeService, AudioQuality, DownloadMode
+from service import YouTubeService
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -105,10 +105,11 @@ async def search_videos(request: SearchRequest):
 )
 async def download_audio(request: DownloadRequest):
     """
-    Download de áudio em MP3 do YouTube.
+    Download de áudio em M4A (formato original do YouTube).
+    Não usa conversão FFmpeg para funcionar no Railway.
     
     Args:
-        request: Objeto com ID do vídeo, qualidade e modo de operação
+        request: Objeto com ID do vídeo
         
     Returns:
         DownloadResponse com informações do arquivo baixado
@@ -117,37 +118,23 @@ async def download_audio(request: DownloadRequest):
         HTTPException: Erro no download
     """
     try:
-        if request.mode == DownloadMode.DOWNLOAD:
-            # Modo download: baixa o arquivo completo
-            filepath, file_size, duration = await youtube_service.download_audio(
-                video_id=request.video_id,
-                quality=request.quality
-            )
-            
-            # Retorna URL para download do arquivo
-            download_url = f"/files/{request.video_id}.mp3"
-            
-            return DownloadResponse(
-                success=True,
-                message="Áudio baixado com sucesso",
-                download_url=download_url,
-                file_size=file_size,
-                duration=duration
-            )
-        else:
-            # Modo stream: retorna URL de streaming direto com informações de formato
-            stream_info = await youtube_service.get_audio_stream_info(request.video_id)
-            
-            return DownloadResponse(
-                success=True,
-                message="Informações de streaming obtidas com sucesso",
-                stream_url=stream_info['stream_url'],
-                duration=stream_info['duration'],
-                format=stream_info.get('format'),
-                codec=stream_info.get('codec'),
-                ext=stream_info.get('ext'),
-                is_video_url=stream_info.get('is_video_url')
-            )
+        # Baixa o arquivo no formato original (M4A)
+        filepath, file_size, duration = await youtube_service.download_audio(
+            video_id=request.video_id
+        )
+        
+        # Retorna URL para download do arquivo
+        filename = os.path.basename(filepath)
+        download_url = f"/files/{filename}"
+        
+        return DownloadResponse(
+            success=True,
+            message="Áudio baixado com sucesso (formato M4A)",
+            download_url=download_url,
+            file_size=file_size,
+            duration=duration,
+            format="m4a"
+        )
             
     except Exception as e:
         raise HTTPException(
@@ -165,7 +152,7 @@ async def get_file(filename: str):
     Endpoint para download de arquivos processados.
     
     Args:
-        filename: Nome do arquivo (ex: video_id.mp3)
+        filename: Nome do arquivo (ex: video_id.m4a)
         
     Returns:
         FileResponse com o arquivo solicitado
@@ -183,7 +170,7 @@ async def get_file(filename: str):
     
     return FileResponse(
         path=str(file_path),
-        media_type="audio/mpeg",
+        media_type="audio/mp4",
         filename=filename
     )
 

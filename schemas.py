@@ -5,25 +5,11 @@ Define os modelos de entrada e saída para os endpoints.
 
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from enum import Enum
-
-
-class AudioQuality(str, Enum):
-    """Enum para qualidade de áudio disponível."""
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-class DownloadMode(str, Enum):
-    """Enum para modo de download/streaming."""
-    STREAM = "stream"
-    DOWNLOAD = "download"
 
 
 class VideoMetadata(BaseModel):
     """Metadados de um vídeo do YouTube."""
-    video_id: str = Field(..., description="ID唯一 do vídeo no YouTube")
+    video_id: str = Field(..., description="ID único do vídeo no YouTube")
     title: str = Field(..., description="Título do vídeo")
     thumbnail: str = Field(..., description="URL da miniatura do vídeo")
     duration: int = Field(..., description="Duração em segundos")
@@ -47,24 +33,18 @@ class SearchResponse(BaseModel):
 
 
 class DownloadRequest(BaseModel):
-    """Request para download/streaming de áudio."""
+    """Request para download de áudio."""
     video_id: str = Field(..., description="ID do vídeo no YouTube")
-    quality: Optional[AudioQuality] = Field(AudioQuality.HIGH, description="Qualidade do áudio")
-    mode: DownloadMode = Field(..., description="Modo: stream ou download")
 
 
 class DownloadResponse(BaseModel):
-    """Response do download/streaming."""
+    """Response do download."""
     success: bool = Field(..., description="Status da operação")
     message: str = Field(..., description="Mensagem de status")
     download_url: Optional[str] = Field(None, description="URL para download do arquivo")
-    stream_url: Optional[str] = Field(None, description="URL para streaming")
     file_size: Optional[int] = Field(None, description="Tamanho do arquivo em bytes")
     duration: Optional[int] = Field(None, description="Duração do áudio em segundos")
-    format: Optional[str] = Field(None, description="Formato do áudio (ex: m4a, webm)")
-    codec: Optional[str] = Field(None, description="Codec do áudio (ex: mp4a.40.2, opus)")
-    ext: Optional[str] = Field(None, description="Extensão do arquivo")
-    is_video_url: Optional[bool] = Field(None, description="Indica se a URL é do vídeo original")
+    format: Optional[str] = Field(None, description="Formato do arquivo (m4a)")
 
 
 class ErrorResponse(BaseModel):

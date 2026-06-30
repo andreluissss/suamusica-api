@@ -1,15 +1,14 @@
 """
-Serviço para integração com yt-dlp e processamento de áudio.
-Responsável por buscar metadados, converter e processar mídia do YouTube.
+Serviço para integração com yt-dlp.
+Responsável por buscar metadados e baixar áudio do YouTube.
 """
 
 import asyncio
 import os
-import uuid
-from typing import List, Optional
+from typing import List
 from pathlib import Path
 import yt_dlp
-from schemas import VideoMetadata, AudioQuality, DownloadMode
+from schemas import VideoMetadata
 
 
 class YouTubeService:
@@ -43,34 +42,16 @@ class YouTubeService:
             'noplaylist': False,
         }
     
-    def _get_ydl_options_audio(self, quality: AudioQuality, mode: DownloadMode) -> dict:
+    def _get_ydl_options_audio(self) -> dict:
         """
-        Configurações do yt-dlp para download/conversão de áudio.
-        Simplificado para melhor compatibilidade com Railway.
+        Configurações do yt-dlp para download de áudio sem conversão.
+        Baixa o áudio no formato original (M4A) sem FFmpeg.
         
-        Args:
-            quality: Qualidade do áudio desejada
-            mode: Modo de operação (stream ou download)
-            
         Returns:
             Dicionário com configurações do yt-dlp
         """
-        # Mapeamento de qualidade para formato
-        quality_map = {
-            AudioQuality.HIGH: '320',
-            AudioQuality.MEDIUM: '192',
-            AudioQuality.LOW: '128'
-        }
-        
-        bitrate = quality_map.get(quality, '320')
-        
         return {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': bitrate,
-            }],
             'outtmpl': str(self.download_dir / '%(id)s.%(ext)s'),
             'quiet': True,
             'no_warnings': True,
@@ -150,17 +131,13 @@ class YouTubeService:
         
         return videos
     
-    async def download_audio(
-        self, 
-        video_id: str, 
-        quality: AudioQuality = AudioQuality.HIGH
-    ) -> tuple[str, int, int]:
+    async def download_audio(self, video_id: str) -> tuple[str, int, int]:
         """
-        Download assíncrono de áudio em MP3.
+        Download assíncrono de áudio no formato original (M4A).
+        Não usa FFmpeg para conversão.
         
         Args:
             video_id: ID do vídeo
-            quality: Qualidade do áudio
             
         Returns:
             Tupla com (caminho do arquivo, tamanho em bytes, duração)
@@ -173,14 +150,23 @@ class YouTubeService:
         
         def _download():
             try:
-                ydl_opts = self._get_ydl_options_audio(quality, DownloadMode.DOWNLOAD)
+                ydl_opts = self._get_ydl_options_audio()
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     
                     if info:
-                        # Caminho do arquivo baixado
-                        filepath = str(self.download_dir / f"{video_id}.mp3")
+                        # Caminho do arquivo baixado (será M4A)
+                        filepath = str(self.download_dir / f"{video_id}.m4a")
+                        
+                        # Tenta encontrar o arquivo baixado
+                        if not os.path.exists(filepath):
+                            # O yt-dlp pode ter usado outra extensão
+                            for ext in ['m4a', 'webm', 'mp4']:
+                                test_path = str(self.download_dir / f"{video_id}.{ext}")
+                                if os.path.exists(test_path):
+                                    filepath = test_path
+                                    break
                         
                         # Tamanho do arquivo
                         file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
@@ -195,100 +181,6 @@ class YouTubeService:
                 raise Exception(f"Erro ao baixar áudio: {str(e)}")
         
         return await loop.run_in_executor(None, _download)
-    
-    async def get_audio_stream_info(self, video_id: str) -> dict:
-        """
-        Obtém informações para streaming de áudio sem download completo.
-        Retorna URL de streaming do YouTube para player específico no app.
-        
-        Args:
-            video_id: ID do vídeo
-            
-        Returns:
-            Dicionário com informações de streaming incluindo URL e formato
-            
-        Raises:
-            Exception: Erro ao obter informações
-        """
-        loop = asyncio.get_event_loop()
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        def _get_stream_info():
-            try:
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'format': 'bestaudio/best',
-                    'extract_flat': False,
-                }
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    
-                    if info:
-                        # Encontra a melhor URL de áudio com informações completas
-                        audio_url = None
-                        audio_format = None
-                        audio_codec = None
-                        audio_ext = None
-                        
-                        # Buscar formatos de áudio em ordem de preferência
-                        for format in info.get('formats', []):
-                            ext = format.get('ext', '')
-                            acodec = format.get('acodec', '')
-                            vcodec = format.get('vcodec', '')
-                            format_url = format.get('url')
-                            
-                            # Preferir formatos de áudio puro (sem vídeo)
-                            if acodec != 'none' and vcodec == 'none':
-                                if not audio_url:
-                                    audio_url = format_url
-                                    audio_format = format.get('format', '')
-                                    audio_codec = acodec
-                                    audio_ext = ext
-                                
-                                # Preferir m4a/AAC (mais compatível)
-                                if ext == 'm4a' and acodec == 'mp4a.40.2':
-                                    audio_url = format_url
-                                    audio_format = format.get('format', '')
-                                    audio_codec = acodec
-                                    audio_ext = ext
-                                    break
-                        
-                        # Se não encontrou áudio puro, busca melhor formato com áudio
-                        if not audio_url:
-                            for format in info.get('formats', []):
-                                if format.get('acodec') != 'none':
-                                    audio_url = format.get('url')
-                                    audio_format = format.get('format', '')
-                                    audio_codec = format.get('acodec', '')
-                                    audio_ext = format.get('ext', '')
-                                    break
-                        
-                        # Se ainda não encontrou, usa URL do vídeo
-                        if not audio_url:
-                            audio_url = url
-                            audio_format = 'video'
-                            audio_codec = 'unknown'
-                            audio_ext = 'mp4'
-                        
-                        return {
-                            'stream_url': audio_url,
-                            'duration': info.get('duration', 0),
-                            'title': info.get('title', ''),
-                            'thumbnail': info.get('thumbnail', ''),
-                            'format': audio_format,
-                            'codec': audio_codec,
-                            'ext': audio_ext,
-                            'is_video_url': audio_url == url,
-                            'filesize': info.get('filesize', 0) or 0
-                        }
-                    
-                raise Exception("Não foi possível extrair informações de streaming")
-            except Exception as e:
-                raise Exception(f"Erro ao obter informações de streaming: {str(e)}")
-        
-        return await loop.run_in_executor(None, _get_stream_info)
     
     async def cleanup_old_files(self, max_age_hours: int = 24):
         """
@@ -305,7 +197,7 @@ class YouTubeService:
                 current_time = time.time()
                 max_age_seconds = max_age_hours * 3600
                 
-                for file_path in self.download_dir.glob('*.mp3'):
+                for file_path in self.download_dir.glob('*'):
                     if file_path.is_file():
                         file_age = current_time - file_path.stat().st_mtime
                         if file_age > max_age_seconds:
