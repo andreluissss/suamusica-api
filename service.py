@@ -113,3 +113,86 @@ class YouTubeService:
             videos.append(video)
         
         return videos
+    
+    async def get_audio_stream_url(self, video_id: str) -> dict:
+        """
+        Extrai apenas a URL de stream de áudio do YouTube.
+        Não baixa arquivo, não usa FFmpeg, apenas retorna a URL direta.
+        
+        Args:
+            video_id: ID do vídeo
+            
+        Returns:
+            Dicionário com stream_url e metadados básicos
+            
+        Raises:
+            Exception: Erro ao extrair URL
+        """
+        loop = asyncio.get_event_loop()
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        def _get_stream_url():
+            try:
+                ydl_opts = {
+                    'format': 'bestaudio',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'postprocessors': [],
+                    'extract_flat': False,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                    if info:
+                        # Encontra a melhor URL de áudio
+                        audio_url = None
+                        audio_format = None
+                        audio_ext = None
+                        
+                        # Busca formatos de áudio puro (sem vídeo)
+                        for format in info.get('formats', []):
+                            acodec = format.get('acodec', '')
+                            vcodec = format.get('vcodec', '')
+                            format_url = format.get('url')
+                            
+                            # Preferir áudio puro (sem vídeo)
+                            if acodec != 'none' and vcodec == 'none':
+                                if not audio_url:
+                                    audio_url = format_url
+                                    audio_format = format.get('format', '')
+                                    audio_ext = format.get('ext', '')
+                                
+                                # Preferir m4a/AAC (mais compatível)
+                                if format.get('ext') == 'm4a':
+                                    audio_url = format_url
+                                    audio_format = format.get('format', '')
+                                    audio_ext = 'm4a'
+                                    break
+                        
+                        # Se não encontrou áudio puro, usa o melhor com áudio
+                        if not audio_url:
+                            for format in info.get('formats', []):
+                                if format.get('acodec') != 'none' and format.get('url'):
+                                    audio_url = format.get('url')
+                                    audio_format = format.get('format', '')
+                                    audio_ext = format.get('ext', '')
+                                    break
+                        
+                        if audio_url:
+                            return {
+                                'stream_url': audio_url,
+                                'duration': info.get('duration', 0),
+                                'title': info.get('title', ''),
+                                'thumbnail': info.get('thumbnail', ''),
+                                'format': audio_format,
+                                'ext': audio_ext,
+                            }
+                    
+                raise Exception("Não foi possível extrair URL de stream")
+            except Exception as e:
+                raise Exception(f"Erro ao extrair URL de stream: {str(e)}")
+        
+        return await loop.run_in_executor(None, _get_stream_url)

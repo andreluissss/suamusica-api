@@ -32,6 +32,17 @@ class SearchResponse(BaseModel):
     total: int = Field(..., description="Total de resultados")
 
 
+class StreamUrlResponse(BaseModel):
+    """Response da URL de stream de áudio."""
+    success: bool = Field(..., description="Status da operação")
+    stream_url: str = Field(..., description="URL direta do stream de áudio do YouTube")
+    duration: int = Field(..., description="Duração em segundos")
+    title: str = Field(..., description="Título do vídeo")
+    thumbnail: str = Field(..., description="URL da miniatura")
+    format: Optional[str] = Field(None, description="Formato do áudio")
+    ext: Optional[str] = Field(None, description="Extensão do arquivo (m4a, webm)")
+
+
 class ErrorResponse(BaseModel):
     """Modelo de resposta de erro."""
     success: bool = Field(False, description="Sempre False para erros")

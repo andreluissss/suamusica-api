@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from schemas import (
     SearchRequest, 
     SearchResponse, 
+    StreamUrlResponse,
     ErrorResponse,
     VideoMetadata
 )
@@ -93,6 +94,45 @@ async def search_videos(request: SearchRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao buscar vídeos: {str(e)}"
+        )
+
+
+@app.get(
+    "/stream/{video_id}",
+    response_model=StreamUrlResponse,
+    tags=["Stream"]
+)
+async def get_stream_url(video_id: str):
+    """
+    Extrai a URL direta de stream de áudio do YouTube.
+    Não baixa arquivo, não usa FFmpeg, apenas retorna a URL para o cliente.
+    
+    Args:
+        video_id: ID do vídeo no YouTube (ex: dQw4w9WgXcQ)
+        
+    Returns:
+        StreamUrlResponse com URL direta do stream de áudio
+        
+    Raises:
+        HTTPException: Erro ao extrair URL
+    """
+    try:
+        stream_info = await youtube_service.get_audio_stream_url(video_id)
+        
+        return StreamUrlResponse(
+            success=True,
+            stream_url=stream_info['stream_url'],
+            duration=stream_info['duration'],
+            title=stream_info['title'],
+            thumbnail=stream_info['thumbnail'],
+            format=stream_info.get('format'),
+            ext=stream_info.get('ext')
+        )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao extrair URL de stream: {str(e)}"
         )
 
 
