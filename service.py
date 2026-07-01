@@ -134,7 +134,6 @@ class YouTubeService:
         def _get_stream_url():
             try:
                 ydl_opts = {
-                    'format': 'best',
                     'quiet': True,
                     'no_warnings': True,
                     'download': False,
