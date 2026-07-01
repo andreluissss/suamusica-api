@@ -16,7 +16,6 @@ from schemas import (
     SearchResponse, 
     DownloadRequest,
     DownloadResponse,
-    StreamUrlResponse,
     ErrorResponse,
     VideoMetadata
 )
