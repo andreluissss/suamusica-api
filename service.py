@@ -10,13 +10,6 @@ from pathlib import Path
 import yt_dlp
 from schemas import VideoMetadata
 
-# Instalação automática do FFmpeg
-try:
-    from static_ffmpeg import add_paths
-    add_paths()
-except ImportError:
-    pass
-
 import ffmpeg
 
 
