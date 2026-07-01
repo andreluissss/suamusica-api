@@ -116,22 +116,45 @@ class YouTubeService:
     
     async def get_audio_stream_url(self, video_id: str) -> dict:
         """
-        Retorna a URL do vídeo do YouTube.
-        O app deve usar biblioteca própria para extrair o stream de áudio.
+        Extrai a URL de stream de áudio crua do YouTube.
+        Não usa FFmpeg, não converte, apenas retorna a URL direta do arquivo de áudio.
         
         Args:
             video_id: ID do vídeo
             
         Returns:
-            Dicionário com URL do vídeo e metadados básicos
+            Dicionário com stream_url de áudio e metadados
         """
+        loop = asyncio.get_event_loop()
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        return {
-            'stream_url': url,
-            'duration': 0,
-            'title': '',
-            'thumbnail': '',
-            'format': 'video',
-            'ext': 'mp4',
-        }
+        def _get_stream_url():
+            try:
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                    if info:
+                        # Pega o primeiro formato de áudio disponível
+                        for format in info.get('formats', []):
+                            if format.get('acodec') != 'none' and format.get('url'):
+                                return {
+                                    'stream_url': format.get('url'),
+                                    'duration': info.get('duration', 0),
+                                    'title': info.get('title', ''),
+                                    'thumbnail': info.get('thumbnail', ''),
+                                    'format': format.get('format', ''),
+                                    'ext': format.get('ext', ''),
+                                }
+                    
+                raise Exception("Não foi possível extrair URL de áudio")
+            except Exception as e:
+                raise Exception(f"Erro ao extrair URL de áudio: {str(e)}")
+        
+        return await loop.run_in_executor(None, _get_stream_url)
