@@ -5,10 +5,19 @@ Responsável por buscar metadados e baixar áudio do YouTube.
 
 import asyncio
 import os
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 import yt_dlp
 from schemas import VideoMetadata
+
+# Instalação automática do FFmpeg
+try:
+    from static_ffmpeg import add_paths
+    add_paths()
+except ImportError:
+    pass
+
+import ffmpeg
 
 
 class YouTubeService:
@@ -158,3 +167,123 @@ class YouTubeService:
                 raise Exception(f"Erro ao extrair URL de áudio: {str(e)}")
         
         return await loop.run_in_executor(None, _get_stream_url)
+    
+    def processar_midia(
+        self, 
+        caminho_entrada: str, 
+        caminho_saida: str, 
+        **kwargs
+    ) -> bool:
+        """
+        Processa mídia usando FFmpeg com tratamento de erros robusto.
+        
+        Args:
+            caminho_entrada: Caminho do arquivo de entrada
+            caminho_saida: Caminho do arquivo de saída
+            **kwargs: Argumentos adicionais para FFmpeg (codec, bitrate, etc.)
+        
+        Returns:
+            True se processamento bem-sucedido, False caso contrário
+        """
+        try:
+            print(f"[FFmpeg] Processando: {caminho_entrada} -> {caminho_saida}")
+            
+            # Constrói o pipeline FFmpeg
+            input_stream = ffmpeg.input(caminho_entrada)
+            
+            # Aplica argumentos adicionais se fornecidos
+            output_stream = input_stream.output(caminho_saida, **kwargs)
+            
+            # Executa o processamento
+            ffmpeg.run(output_stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            
+            # Verifica se o arquivo de saída foi criado
+            if os.path.exists(caminho_saida):
+                print(f"[FFmpeg] Processamento concluído com sucesso: {caminho_saida}")
+                
+                # Deleta arquivo original após conversão bem-sucedida
+                if os.path.exists(caminho_entrada):
+                    os.remove(caminho_entrada)
+                    print(f"[FFmpeg] Arquivo original deletado: {caminho_entrada}")
+                
+                return True
+            else:
+                print(f"[FFmpeg] Erro: Arquivo de saída não foi criado")
+                return False
+                
+        except ffmpeg.Error as e:
+            print(f"[FFmpeg] Erro no processamento: {e.stderr.decode('utf8') if e.stderr else str(e)}")
+            return False
+        except Exception as e:
+            print(f"[FFmpeg] Erro inesperado: {str(e)}")
+            return False
+    
+    async def download_audio(self, video_id: str, output_format: str = 'mp3') -> tuple[str, int, int]:
+        """
+        Baixa áudio do YouTube e converte usando FFmpeg.
+        
+        Args:
+            video_id: ID do vídeo
+            output_format: Formato de saída (mp3, m4a, etc.)
+            
+        Returns:
+            Tupla com (caminho do arquivo, tamanho em bytes, duração)
+            
+        Raises:
+            Exception: Erro no download ou conversão
+        """
+        loop = asyncio.get_event_loop()
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        def _download():
+            try:
+                # Baixa áudio no formato original
+                ydl_opts = {
+                    'format': 'bestaudio',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'outtmpl': str(self.download_dir / f'{video_id}.%(ext)s'),
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if not info:
+                        raise Exception("Não foi possível baixar o vídeo")
+                    
+                    # Encontra o arquivo baixado
+                    downloaded_file = None
+                    for ext in ['m4a', 'webm', 'mp4']:
+                        test_file = self.download_dir / f"{video_id}.{ext}"
+                        if test_file.exists():
+                            downloaded_file = str(test_file)
+                            break
+                    
+                    if not downloaded_file:
+                        raise Exception("Arquivo baixado não encontrado")
+                    
+                    # Converte para o formato desejado
+                    output_file = str(self.download_dir / f"{video_id}.{output_format}")
+                    
+                    # Argumentos FFmpeg para conversão de áudio
+                    ffmpeg_args = {
+                        'acodec': 'libmp3lame' if output_format == 'mp3' else 'aac',
+                        'ab': '192k',
+                        'vn': None,  # Sem vídeo
+                    }
+                    
+                    success = self.processar_midia(downloaded_file, output_file, **ffmpeg_args)
+                    
+                    if not success:
+                        raise Exception("Falha na conversão FFmpeg")
+                    
+                    # Retorna informações do arquivo convertido
+                    file_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
+                    duration = info.get('duration', 0)
+                    
+                    return output_file, file_size, duration
+                    
+            except Exception as e:
+                raise Exception(f"Erro ao baixar/converter áudio: {str(e)}")
+        
+        return await loop.run_in_executor(None, _download)

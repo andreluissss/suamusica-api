@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from schemas import (
     SearchRequest, 
     SearchResponse, 
+    DownloadRequest,
+    DownloadResponse,
     StreamUrlResponse,
     ErrorResponse,
     VideoMetadata
@@ -25,9 +27,9 @@ load_dotenv()
 
 # Inicialização da aplicação
 app = FastAPI(
-    title="YouTube Search API",
-    description="API para busca de vídeos do YouTube. O app deve usar biblioteca própria para download.",
-    version="1.0.0"
+    title="YouTube Media Processor API",
+    description="API para busca, download e conversão de áudio do YouTube com FFmpeg automático.",
+    version="2.0.0"
 )
 
 # Configuração de CORS
@@ -97,43 +99,79 @@ async def search_videos(request: SearchRequest):
         )
 
 
-@app.get(
-    "/stream/{video_id}",
-    response_model=StreamUrlResponse,
-    tags=["Stream"]
+@app.post(
+    "/download",
+    response_model=DownloadResponse,
+    tags=["Download"]
 )
-async def get_stream_url(video_id: str):
+async def download_audio(request: DownloadRequest):
     """
-    Extrai a URL direta de stream de áudio do YouTube.
-    Não baixa arquivo, não usa FFmpeg, apenas retorna a URL para o cliente.
+    Baixa áudio do YouTube e converte usando FFmpeg.
     
     Args:
-        video_id: ID do vídeo no YouTube (ex: dQw4w9WgXcQ)
+        request: Objeto com ID do vídeo e formato de saída
         
     Returns:
-        StreamUrlResponse com URL direta do stream de áudio
+        DownloadResponse com informações do arquivo baixado
         
     Raises:
-        HTTPException: Erro ao extrair URL
+        HTTPException: Erro no download ou conversão
     """
     try:
-        stream_info = await youtube_service.get_audio_stream_url(video_id)
+        filepath, file_size, duration = await youtube_service.download_audio(
+            video_id=request.video_id,
+            output_format=request.format
+        )
         
-        return StreamUrlResponse(
+        filename = os.path.basename(filepath)
+        download_url = f"/files/{filename}"
+        
+        return DownloadResponse(
             success=True,
-            stream_url=stream_info['stream_url'],
-            duration=stream_info['duration'],
-            title=stream_info['title'],
-            thumbnail=stream_info['thumbnail'],
-            format=stream_info.get('format'),
-            ext=stream_info.get('ext')
+            message=f"Áudio baixado e convertido para {request.format}",
+            download_url=download_url,
+            file_size=file_size,
+            duration=duration,
+            format=request.format
         )
             
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao extrair URL de stream: {str(e)}"
+            detail=f"Erro ao baixar/converter áudio: {str(e)}"
         )
+
+
+@app.get(
+    "/files/{filename}",
+    tags=["Files"]
+)
+async def get_file(filename: str):
+    """
+    Endpoint para download de arquivos processados.
+    
+    Args:
+        filename: Nome do arquivo (ex: video_id.mp3)
+        
+    Returns:
+        FileResponse com o arquivo solicitado
+        
+    Raises:
+        HTTPException: Arquivo não encontrado
+    """
+    file_path = youtube_service.download_dir / filename
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Arquivo não encontrado"
+        )
+    
+    return FileResponse(
+        path=str(file_path),
+        media_type="audio/mpeg" if filename.endswith('.mp3') else "audio/mp4",
+        filename=filename
+    )
 
 
 @app.exception_handler(HTTPException)
