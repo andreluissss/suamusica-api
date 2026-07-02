@@ -10,14 +10,8 @@ from pathlib import Path
 import yt_dlp
 from schemas import VideoMetadata
 
-# Instalação automática do FFmpeg
-try:
-    from static_ffmpeg import add_paths
-    add_paths()
-except ImportError:
-    pass
-
-import ffmpeg
+import subprocess
+import json
 
 
 class YouTubeService:
@@ -175,7 +169,7 @@ class YouTubeService:
         **kwargs
     ) -> bool:
         """
-        Processa mídia usando FFmpeg com tratamento de erros robusto.
+        Processa mídia usando FFmpeg via subprocess com tratamento de erros robusto.
         
         Args:
             caminho_entrada: Caminho do arquivo de entrada
@@ -188,14 +182,41 @@ class YouTubeService:
         try:
             print(f"[FFmpeg] Processando: {caminho_entrada} -> {caminho_saida}")
             
-            # Constrói o pipeline FFmpeg
-            input_stream = ffmpeg.input(caminho_entrada)
+            # Constrói comando FFmpeg via subprocess
+            cmd = ['ffmpeg', '-i', caminho_entrada]
             
-            # Aplica argumentos adicionais se fornecidos
-            output_stream = input_stream.output(caminho_saida, **kwargs)
+            # Mapeia kwargs para argumentos FFmpeg
+            for key, value in kwargs.items():
+                if key == 'acodec':
+                    cmd.extend(['-acodec', str(value)])
+                elif key == 'ab':
+                    cmd.extend(['-ab', str(value)])
+                elif key == 'vn' and value is None:
+                    cmd.append('-vn')
+                elif key == 'ar':
+                    cmd.extend(['-ar', str(value)])
+                elif key == 'ac':
+                    cmd.extend(['-ac', str(value)])
+                elif key == 'f':
+                    cmd.extend(['-f', str(value)])
+                else:
+                    cmd.extend([f'-{key}', str(value)])
+            
+            cmd.extend(['-y', caminho_saida])
+            
+            print(f"[FFmpeg] Comando: {' '.join(cmd)}")
             
             # Executa o processamento
-            ffmpeg.run(output_stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minutos timeout
+            )
+            
+            if result.returncode != 0:
+                print(f"[FFmpeg] Erro no processamento: {result.stderr}")
+                return False
             
             # Verifica se o arquivo de saída foi criado
             if os.path.exists(caminho_saida):
@@ -211,8 +232,11 @@ class YouTubeService:
                 print(f"[FFmpeg] Erro: Arquivo de saída não foi criado")
                 return False
                 
-        except ffmpeg.Error as e:
-            print(f"[FFmpeg] Erro no processamento: {e.stderr.decode('utf8') if e.stderr else str(e)}")
+        except subprocess.TimeoutExpired:
+            print(f"[FFmpeg] Erro: Timeout no processamento")
+            return False
+        except FileNotFoundError:
+            print(f"[FFmpeg] Erro: FFmpeg não encontrado no sistema. Instale ffmpeg ou use Docker.")
             return False
         except Exception as e:
             print(f"[FFmpeg] Erro inesperado: {str(e)}")

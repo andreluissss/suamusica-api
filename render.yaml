@@ -1,17 +1,16 @@
 services:
-  # Serviço Web para a API
+  # Serviço Web para a API com Docker (inclui FFmpeg)
   - type: web
     name: youtube-scraper-api
-    env: python
+    env: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: PORT
         value: 8000
       - key: DOWNLOAD_DIR
-        value: /opt/render/project/src/downloads
+        value: /app/downloads
     disk:
       name: downloads
-      mountPath: /opt/render/project/src/downloads
+      mountPath: /app/downloads
       sizeGB: 1
