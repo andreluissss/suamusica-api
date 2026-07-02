@@ -119,108 +119,105 @@ class YouTubeService:
     
     async def get_audio_stream_url(self, video_id: str) -> dict:
         """
-        Extrai a URL de stream de áudio crua do YouTube via Piped API.
+        Extrai a URL de stream de áudio crua do YouTube.
+        Usa requests para acessar diretamente o endpoint de video info do YouTube
+        (mesma abordagem do pytube), sem depender de yt-dlp.
         Não baixa nada no servidor, apenas retorna a URL direta do áudio (m4a, webm, etc.).
         """
         import requests as sync_requests
+        import re
+        import json
         loop = asyncio.get_event_loop()
         
-        def _fetch_from_piped():
-            """Usa Piped API (YouTube frontend alternativo) para obter URL de áudio"""
-            piped_instances = [
-                f"https://pipedapi.kavin.rocks/streams/{video_id}",
-                f"https://pipedapi.r4fo.com/streams/{video_id}",
-                f"https://pipedapi.reallyaweso.me/streams/{video_id}",
-                f"https://pipedapi.smnz.de/streams/{video_id}",
-                f"https://api.piped.mha.fi/streams/{video_id}",
-            ]
+        def _extract_audio_urls(player_response):
+            """Extrai URLs de áudio do player_response do YouTube"""
+            urls = []
             
-            for api_url in piped_instances:
-                try:
-                    resp = sync_requests.get(
-                        api_url,
-                        timeout=15,
-                        headers={
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                            'Accept': 'application/json',
-                        }
-                    )
-                    
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        audio_streams = data.get('audioStreams', [])
-                        
-                        if audio_streams:
-                            # Pega o melhor stream de áudio (maior bitrate)
-                            best = max(audio_streams, key=lambda x: x.get('bitrate', 0) or 0)
-                            return {
-                                'stream_url': best.get('url'),
-                                'duration': data.get('duration', 0),
-                                'title': data.get('title', ''),
-                                'thumbnail': data.get('thumbnailUrl', data.get('uploaderAvatar', '')),
-                                'format': best.get('quality', ''),
-                                'ext': best.get('format', 'webm').split('/')[-1].split(';')[0],
-                            }
-                        
-                        # Se não achou audioStreams, tenta videoStreams com audio
-                        video_streams = data.get('videoStreams', [])
-                        if video_streams:
-                            # Pega o menor (áudio incluso)
-                            best = video_streams[-1]  # menor qualidade = menos vídeo
-                            return {
-                                'stream_url': best.get('url'),
-                                'duration': data.get('duration', 0),
-                                'title': data.get('title', ''),
-                                'thumbnail': data.get('thumbnailUrl', data.get('uploaderAvatar', '')),
-                                'format': best.get('quality', ''),
-                                'ext': best.get('format', 'mp4').split('/')[-1].split(';')[0],
-                            }
-                except Exception:
-                    continue
+            # Tenta extrair de streamingData
+            streaming_data = player_response.get('streamingData', {})
             
-            raise Exception("Nenhuma instância Piped respondeu com stream de áudio")
+            # Formatos adaptativos (áudio puro)
+            for fmt in streaming_data.get('adaptiveFormats', []):
+                mime = fmt.get('mimeType', '')
+                if mime.startswith('audio/'):
+                    url = fmt.get('url') or fmt.get('signatureCipher', '')
+                    if url:
+                        urls.append({
+                            'url': url,
+                            'abr': fmt.get('averageBitrate', fmt.get('bitrate', 0)),
+                            'mime': mime,
+                            'ext': mime.split('/')[-1].split(';')[0],
+                            'quality': fmt.get('qualityLabel', ''),
+                        })
+            
+            # Formatos normais (podem ter áudio)
+            for fmt in streaming_data.get('formats', []):
+                mime = fmt.get('mimeType', '')
+                if mime.startswith('audio/') or True:  # Pega todos com audio
+                    acodec = fmt.get('audioChannels', 0)
+                    if acodec > 0:
+                        url = fmt.get('url') or fmt.get('signatureCipher', '')
+                        if url:
+                            urls.append({
+                                'url': url,
+                                'abr': fmt.get('averageBitrate', fmt.get('bitrate', 0)),
+                                'mime': mime,
+                                'ext': mime.split('/')[-1].split(';')[0],
+                                'quality': fmt.get('qualityLabel', ''),
+                            })
+            
+            return urls
 
-        def _fetch_from_invidious():
-            """Fallback: tenta Invidious API"""
-            invidious_instances = [
-                f"https://invidious.snopyta.org/api/v1/videos/{video_id}",
-                f"https://invidious.privacydev.net/api/v1/videos/{video_id}",
-                f"https://yt.artemislena.eu/api/v1/videos/{video_id}",
-            ]
+        def _fetch_direct():
+            """Acessa diretamente o YouTube para extrair URLs de áudio"""
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+            }
             
-            for api_url in invidious_instances:
-                try:
-                    resp = sync_requests.get(api_url, timeout=10, headers={
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    })
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        all_audio = []
-                        for f in data.get('formatStreams', []):
-                            if f.get('type', '').startswith('audio'):
-                                all_audio.append(f)
-                        for f in data.get('adaptiveFormats', []):
-                            if f.get('type', '').startswith('audio'):
-                                all_audio.append(f)
-                        if all_audio:
-                            best = max(all_audio, key=lambda x: x.get('bitrate', 0) or 0)
-                            thumbnail = ''
-                            if data.get('videoThumbnails'):
-                                thumbnail = data['videoThumbnails'][0].get('url', '')
-                            return {
-                                'stream_url': best.get('url'),
-                                'duration': data.get('lengthSeconds', 0),
-                                'title': data.get('title', ''),
-                                'thumbnail': thumbnail,
-                                'format': best.get('encoding', ''),
-                                'ext': best.get('container', 'webm'),
-                            }
-                except Exception:
-                    continue
-            raise Exception("Nenhuma instância Invidious respondeu")
-
-        def _try_ytdlp():
-            """Tenta yt-dlp como primeira opção"""
+            # Tenta obter a página do vídeo
+            watch_url = f'https://www.youtube.com/watch?v={video_id}'
+            resp = sync_requests.get(watch_url, headers=headers, timeout=15)
+            
+            if resp.status_code != 200:
+                raise Exception(f"Falha ao acessar YouTube: HTTP {resp.status_code}")
+            
+            # Extrai o ytInitialPlayerResponse dos dados da página
+            # Padrão: ytInitialPlayerResponse = {...};
+            match = re.search(r'ytInitialPlayerResponse\s*=\s*({.*?});', resp.text, re.DOTALL)
+            if not match:
+                raise Exception("Não foi possível extrair player response da página")
+            
+            player_data = json.loads(match.group(1))
+            
+            # Extrai metadados
+            video_details = player_data.get('videoDetails', {})
+            title = video_details.get('title', '')
+            duration = int(video_details.get('lengthSeconds', 0))
+            thumbnail = f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'
+            
+            # Extrai URLs de áudio
+            audio_urls = _extract_audio_urls(player_data)
+            
+            if not audio_urls:
+                raise Exception("Nenhum formato de áudio encontrado")
+            
+            # Pega o melhor (maior bitrate)
+            best = max(audio_urls, key=lambda x: x.get('abr', 0) or 0)
+            
+            return {
+                'stream_url': best['url'],
+                'duration': duration,
+                'title': title,
+                'thumbnail': thumbnail,
+                'format': best.get('quality', ''),
+                'ext': best['ext'],
+            }
+        
+        def _fetch_from_ytdlp():
+            """Fallback: tenta yt-dlp"""
             try:
                 url = f"https://www.youtube.com/watch?v={video_id}"
                 opts = {
@@ -249,24 +246,53 @@ class YouTubeService:
                 pass
             return None
 
+        def _fetch_from_piped():
+            """Fallback: tenta Piped API"""
+            piped_instances = [
+                f"https://pipedapi.kavin.rocks/streams/{video_id}",
+                f"https://pipedapi.r4fo.com/streams/{video_id}",
+            ]
+            for api_url in piped_instances:
+                try:
+                    resp = sync_requests.get(api_url, timeout=10, headers={
+                        'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json',
+                    })
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        audio_streams = data.get('audioStreams', [])
+                        if audio_streams:
+                            best = max(audio_streams, key=lambda x: x.get('bitrate', 0) or 0)
+                            return {
+                                'stream_url': best.get('url'),
+                                'duration': data.get('duration', 0),
+                                'title': data.get('title', ''),
+                                'thumbnail': data.get('thumbnailUrl', ''),
+                                'format': best.get('quality', ''),
+                                'ext': best.get('format', 'webm').split('/')[-1].split(';')[0],
+                            }
+                except:
+                    continue
+            return None
+
         def _get_stream_url():
-            # 1. Tenta yt-dlp
-            result = _try_ytdlp()
-            if result:
-                return result
-            
-            # 2. Tenta Piped API
+            # 1. Tenta extração direta (mesmo método do pytube)
             try:
-                return _fetch_from_piped()
+                return _fetch_direct()
             except Exception:
                 pass
             
-            # 3. Tenta Invidious
-            try:
-                return _fetch_from_invidious()
-            except Exception as e:
-                raise Exception(f"Todas as fontes falharam. Último erro: {str(e)}")
-        
+            # 2. Tenta yt-dlp
+            result = _fetch_from_ytdlp()
+            if result:
+                return result
+            
+            # 3. Tenta Piped
+            result = _fetch_from_piped()
+            if result:
+                return result
+            
+            raise Exception("Todas as fontes falharam")
+
         return await loop.run_in_executor(None, _get_stream_url)
     
     def processar_midia(
