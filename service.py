@@ -228,15 +228,14 @@ class YouTubeService:
                     'no_warnings': True,
                     'download': False,
                     'extract_flat': False,
-                    'format': 'bestaudio[protocol^=http]',
-                    'user_agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
-                    'extractor_args': {'youtube': {'player_client': ['android_tv'], 'skip': ['webpage', 'dash', 'hls']}},
+                    'user_agent': 'com.google.ios.youtube/19.45.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X)',
+                    'extractor_args': {'youtube': {'player_client': ['ios']}},
                 }
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if info:
                         formats = info.get('formats', [])
-                        audio = [f for f in formats if f.get('acodec') != 'none' and f.get('url') and f.get('protocol') in ('https', 'http')]
+                        audio = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
                         audio.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
                         if audio:
                             best = audio[0]
