@@ -133,28 +133,55 @@ class YouTubeService:
         
         def _get_stream_url():
             try:
+                # Headers realistas para evitar bloqueio do YouTube
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
                     'download': False,
                     'extract_flat': False,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web'],
+                            'skip': ['dash', 'hls'],
+                        }
+                    },
+                    'writesubtitles': False,
+                    'writeautomaticsub': False,
+                    'no_call_home': True,
                 }
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     
                     if info:
-                        # Pega o primeiro formato de áudio disponível
-                        for format in info.get('formats', []):
-                            if format.get('acodec') != 'none' and format.get('url'):
-                                return {
-                                    'stream_url': format.get('url'),
-                                    'duration': info.get('duration', 0),
-                                    'title': info.get('title', ''),
-                                    'thumbnail': info.get('thumbnail', ''),
-                                    'format': format.get('format', ''),
-                                    'ext': format.get('ext', ''),
-                                }
+                        # Tenta primeiro formato de áudio com url
+                        # Ordena por qualidade de áudio (abr)
+                        formats = info.get('formats', [])
+                        
+                        # Filtra formatos de áudio com URL
+                        audio_formats = [
+                            f for f in formats 
+                            if f.get('acodec') != 'none' and f.get('url') 
+                            and f.get('protocol') in ('https', 'http')
+                        ]
+                        
+                        # Ordena por bitrate de áudio (melhor primeiro)
+                        audio_formats.sort(
+                            key=lambda x: x.get('abr', 0) or 0, 
+                            reverse=True
+                        )
+                        
+                        if audio_formats:
+                            best = audio_formats[0]
+                            return {
+                                'stream_url': best.get('url'),
+                                'duration': info.get('duration', 0),
+                                'title': info.get('title', ''),
+                                'thumbnail': info.get('thumbnail', ''),
+                                'format': best.get('format', ''),
+                                'ext': best.get('ext', ''),
+                            }
                     
                 raise Exception("Não foi possível extrair URL de áudio")
             except Exception as e:
