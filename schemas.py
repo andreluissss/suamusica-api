@@ -48,6 +48,22 @@ class DownloadResponse(BaseModel):
     format: Optional[str] = Field(None, description="Formato do arquivo")
 
 
+class StreamUrlRequest(BaseModel):
+    """Request para obter URL de stream de áudio."""
+    video_id: str = Field(..., description="ID do vídeo no YouTube")
+
+
+class StreamUrlResponse(BaseModel):
+    """Response com URL de stream de áudio."""
+    success: bool = Field(..., description="Status da operação")
+    stream_url: Optional[str] = Field(None, description="URL direta do stream de áudio")
+    title: Optional[str] = Field(None, description="Título do vídeo")
+    duration: Optional[int] = Field(None, description="Duração em segundos")
+    thumbnail: Optional[str] = Field(None, description="URL da miniatura")
+    format: Optional[str] = Field(None, description="Formato do áudio")
+    ext: Optional[str] = Field(None, description="Extensão do arquivo")
+
+
 class ErrorResponse(BaseModel):
     """Modelo de resposta de erro."""
     success: bool = Field(False, description="Sempre False para erros")

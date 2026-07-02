@@ -16,6 +16,8 @@ from schemas import (
     SearchResponse, 
     DownloadRequest,
     DownloadResponse,
+    StreamUrlRequest,
+    StreamUrlResponse,
     ErrorResponse,
     VideoMetadata
 )
@@ -138,6 +140,44 @@ async def download_audio(request: DownloadRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao baixar/converter áudio: {str(e)}"
+        )
+
+
+@app.post(
+    "/stream-url",
+    response_model=StreamUrlResponse,
+    tags=["Stream"]
+)
+async def get_stream_url(request: StreamUrlRequest):
+    """
+    Obtém a URL direta do stream de áudio do YouTube.
+    Não baixa nada, apenas retorna a URL do áudio para reprodução/download direto.
+    
+    Args:
+        request: Objeto com ID do vídeo
+        
+    Returns:
+        StreamUrlResponse com a URL direta do stream de áudio
+    """
+    try:
+        result = await youtube_service.get_audio_stream_url(
+            video_id=request.video_id
+        )
+        
+        return StreamUrlResponse(
+            success=True,
+            stream_url=result.get('stream_url'),
+            title=result.get('title'),
+            duration=result.get('duration'),
+            thumbnail=result.get('thumbnail'),
+            format=result.get('format'),
+            ext=result.get('ext')
+        )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao obter URL de stream: {str(e)}"
         )
 
 
