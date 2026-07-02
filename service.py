@@ -169,42 +169,76 @@ class YouTubeService:
             return urls
 
         def _fetch_direct():
-            """Acessa diretamente o YouTube para extrair URLs de áudio"""
+            """Acessa diretamente o YouTube via API interna (endpoint do app Android)"""
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+                'Content-Type': 'application/json',
             }
             
-            # Tenta obter a página do vídeo
-            watch_url = f'https://www.youtube.com/watch?v={video_id}'
-            resp = sync_requests.get(watch_url, headers=headers, timeout=15)
+            # Usa a API interna do YouTube (youtubei/v1/player) que o app Android usa
+            # Esta API é menos restritiva que a página web
+            api_url = "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+            
+            payload = {
+                "context": {
+                    "client": {
+                        "clientName": "ANDROID",
+                        "clientVersion": "19.09.37",
+                        "androidSdkVersion": 34,
+                    }
+                },
+                "videoId": video_id,
+            }
+            
+            resp = sync_requests.post(api_url, json=payload, headers=headers, timeout=15)
             
             if resp.status_code != 200:
-                raise Exception(f"Falha ao acessar YouTube: HTTP {resp.status_code}")
+                raise Exception(f"Falha ao acessar API YouTube: HTTP {resp.status_code}")
             
-            # Extrai o ytInitialPlayerResponse dos dados da página
-            # Padrão: ytInitialPlayerResponse = {...};
-            match = re.search(r'ytInitialPlayerResponse\s*=\s*({.*?});', resp.text, re.DOTALL)
-            if not match:
-                raise Exception("Não foi possível extrair player response da página")
-            
-            player_data = json.loads(match.group(1))
+            data = resp.json()
             
             # Extrai metadados
-            video_details = player_data.get('videoDetails', {})
+            video_details = data.get('videoDetails', {})
             title = video_details.get('title', '')
             duration = int(video_details.get('lengthSeconds', 0))
             thumbnail = f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'
             
-            # Extrai URLs de áudio
-            audio_urls = _extract_audio_urls(player_data)
+            # Extrai URLs de áudio do streamingData
+            streaming_data = data.get('streamingData', {})
+            audio_urls = []
+            
+            for fmt in streaming_data.get('adaptiveFormats', []):
+                mime = fmt.get('mimeType', '')
+                if mime.startswith('audio/'):
+                    url = fmt.get('url', '')
+                    if url:
+                        audio_urls.append({
+                            'url': url,
+                            'abr': fmt.get('bitrate', 0),
+                            'mime': mime,
+                            'ext': mime.split('/')[-1].split(';')[0],
+                        })
+            
+            if not audio_urls:
+                # Tenta pegar a URL cifrada e usar signatureCipher
+                for fmt in streaming_data.get('adaptiveFormats', []):
+                    mime = fmt.get('mimeType', '')
+                    if mime.startswith('audio/'):
+                        cipher = fmt.get('signatureCipher', '')
+                        if cipher:
+                            import urllib.parse
+                            parsed = urllib.parse.parse_qs(cipher)
+                            url = parsed.get('url', [''])[0]
+                            audio_urls.append({
+                                'url': url,
+                                'abr': fmt.get('bitrate', 0),
+                                'mime': mime,
+                                'ext': mime.split('/')[-1].split(';')[0],
+                            })
             
             if not audio_urls:
                 raise Exception("Nenhum formato de áudio encontrado")
             
-            # Pega o melhor (maior bitrate)
             best = max(audio_urls, key=lambda x: x.get('abr', 0) or 0)
             
             return {
@@ -212,7 +246,7 @@ class YouTubeService:
                 'duration': duration,
                 'title': title,
                 'thumbnail': thumbnail,
-                'format': best.get('quality', ''),
+                'format': '',
                 'ext': best['ext'],
             }
         
