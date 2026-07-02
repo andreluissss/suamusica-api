@@ -117,102 +117,127 @@ class YouTubeService:
         
         return videos
     
+    def _get_audio_from_formats(self, info):
+        """Extrai o melhor formato de áudio das informações do vídeo."""
+        formats = info.get('formats', [])
+        audio_formats = [
+            f for f in formats 
+            if f.get('acodec') != 'none' and f.get('url')
+            and f.get('protocol') in ('https', 'http')
+        ]
+        audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
+        if audio_formats:
+            best = audio_formats[0]
+            return {
+                'stream_url': best.get('url'),
+                'duration': info.get('duration', 0),
+                'title': info.get('title', ''),
+                'thumbnail': info.get('thumbnail', ''),
+                'format': best.get('format', ''),
+                'ext': best.get('ext', ''),
+            }
+        return None
+
     async def get_audio_stream_url(self, video_id: str) -> dict:
         """
         Extrai a URL de stream de áudio crua do YouTube.
-        Tenta múltiplos clientes (iOS, android, web) para evitar bloqueio.
+        Tenta múltiplos extractors e clientes para evitar bloqueio.
         Não baixa nada no servidor, apenas retorna a URL direta do áudio (m4a, webm, etc.).
         """
         loop = asyncio.get_event_loop()
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # Lista de configurações de cliente para tentar (do menos restritivo ao mais)
-        client_configs = [
-            # iOS - geralmente menos restritivo
-            {
-                'quiet': True,
-                'no_warnings': True,
-                'download': False,
-                'extract_flat': False,
-                'user_agent': 'com.google.ios.youtube/19.45.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X)',
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['ios'],
-                        'skip': ['dash', 'hls'],
-                    }
-                },
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'no_call_home': True,
-            },
-            # Android
-            {
-                'quiet': True,
-                'no_warnings': True,
-                'download': False,
-                'extract_flat': False,
-                'user_agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'android_embedded'],
-                        'skip': ['dash', 'hls'],
-                    }
-                },
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'no_call_home': True,
-            },
-            # Web (último recurso)
-            {
-                'quiet': True,
-                'no_warnings': True,
-                'download': False,
-                'extract_flat': False,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'no_call_home': True,
-            },
-        ]
-        
-        def _try_extract(ydl_opts):
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info:
-                    formats = info.get('formats', [])
-                    audio_formats = [
-                        f for f in formats 
-                        if f.get('acodec') != 'none' and f.get('url') 
-                        and f.get('protocol') in ('https', 'http')
-                    ]
-                    audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-                    if audio_formats:
-                        best = audio_formats[0]
-                        return {
-                            'stream_url': best.get('url'),
-                            'duration': info.get('duration', 0),
-                            'title': info.get('title', ''),
-                            'thumbnail': info.get('thumbnail', ''),
-                            'format': best.get('format', ''),
-                            'ext': best.get('ext', ''),
-                        }
-            return None
-        
         def _get_stream_url():
+            # Tenta múltiplas estratégias em sequência
+            strategies = [
+                # 1) Android TV client (menos restritivo)
+                {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                    'user_agent': 'Mozilla/5.0 (Linux; Android 12; SM-T500) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                    'extractor_args': {'youtube': {'player_client': ['android_tv'], 'skip': ['webpage', 'dash', 'hls']}},
+                },
+                # 2) iOS
+                {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                    'user_agent': 'com.google.ios.youtube/19.45.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X)',
+                    'extractor_args': {'youtube': {'player_client': ['ios'], 'skip': ['webpage', 'dash', 'hls']}},
+                },
+                # 3) Android
+                {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                    'user_agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+                    'extractor_args': {'youtube': {'player_client': ['android', 'android_embedded'], 'skip': ['webpage', 'dash', 'hls']}},
+                },
+                # 4) Web creator
+                {
+                    'quiet': True, 
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                    'extractor_args': {'youtube': {'player_client': ['web_creator'], 'skip': ['webpage', 'dash', 'hls']}},
+                },
+                # 5) TV HTML5
+                {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                    'user_agent': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36',
+                    'extractor_args': {'youtube': {'player_client': ['tv'], 'skip': ['webpage', 'dash', 'hls']}},
+                },
+            ]
+            
             last_error = None
-            for i, opts in enumerate(client_configs):
+            for opts in strategies:
                 try:
-                    result = _try_extract(opts)
-                    if result:
-                        return result
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        if info:
+                            result = self._get_audio_from_formats(info)
+                            if result:
+                                return result
                 except Exception as e:
                     last_error = str(e)
-                    # Se não for erro de bot detection, propaga
-                    if 'Sign in' not in str(e) and 'bot' not in str(e).lower():
-                        raise
-                    continue
+                    if 'Sign in' in str(e) or 'bot' in str(e).lower():
+                        continue
+                    raise
             
-            raise Exception(f"Todos os clientes falharam. Último erro: {last_error}")
+            # Último recurso: tenta com formato básico
+            try:
+                basic_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'download': False,
+                    'extract_flat': False,
+                    'format': 'bestaudio[protocol^=http]',
+                }
+                with yt_dlp.YoutubeDL(basic_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info:
+                        url_audio = info.get('url', '')
+                        if url_audio:
+                            return {
+                                'stream_url': url_audio,
+                                'duration': info.get('duration', 0),
+                                'title': info.get('title', ''),
+                                'thumbnail': info.get('thumbnail', ''),
+                                'format': '',
+                                'ext': info.get('ext', 'm4a'),
+                            }
+            except Exception as e:
+                last_error = str(e)
+            
+            raise Exception(f"Todas as estratégias falharam. Último erro: {last_error}")
         
         return await loop.run_in_executor(None, _get_stream_url)
     
