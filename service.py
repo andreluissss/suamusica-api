@@ -228,8 +228,6 @@ class YouTubeService:
                     'no_warnings': True,
                     'download': False,
                     'extract_flat': False,
-                    'user_agent': 'com.google.ios.youtube/19.45.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X)',
-                    'extractor_args': {'youtube': {'player_client': ['ios']}},
                 }
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
