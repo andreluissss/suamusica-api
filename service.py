@@ -133,7 +133,8 @@ class YouTubeService:
         
         def _get_stream_url():
             try:
-                # Headers realistas para evitar bloqueio do YouTube
+                # Usa cliente android (menos restritivo que web)
+                # e tenta múltiplas estratégias
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -142,7 +143,7 @@ class YouTubeService:
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
                     'extractor_args': {
                         'youtube': {
-                            'player_client': ['android', 'web'],
+                            'player_client': ['android', 'android_embedded', 'web'],
                             'skip': ['dash', 'hls'],
                         }
                     },
@@ -155,8 +156,6 @@ class YouTubeService:
                     info = ydl.extract_info(url, download=False)
                     
                     if info:
-                        # Tenta primeiro formato de áudio com url
-                        # Ordena por qualidade de áudio (abr)
                         formats = info.get('formats', [])
                         
                         # Filtra formatos de áudio com URL
@@ -185,6 +184,35 @@ class YouTubeService:
                     
                 raise Exception("Não foi possível extrair URL de áudio")
             except Exception as e:
+                # Se falhar com android, tenta com web (pode funcionar para alguns vídeos)
+                try:
+                    ydl_opts = {
+                        'quiet': True,
+                        'no_warnings': True,
+                        'download': False,
+                        'extract_flat': False,
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                    }
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        if info:
+                            formats = info.get('formats', [])
+                            audio_formats = [
+                                f for f in formats 
+                                if f.get('acodec') != 'none' and f.get('url')
+                            ]
+                            if audio_formats:
+                                best = audio_formats[0]
+                                return {
+                                    'stream_url': best.get('url'),
+                                    'duration': info.get('duration', 0),
+                                    'title': info.get('title', ''),
+                                    'thumbnail': info.get('thumbnail', ''),
+                                    'format': best.get('format', ''),
+                                    'ext': best.get('ext', ''),
+                                }
+                except:
+                    pass
                 raise Exception(f"Erro ao extrair URL de áudio: {str(e)}")
         
         return await loop.run_in_executor(None, _get_stream_url)
