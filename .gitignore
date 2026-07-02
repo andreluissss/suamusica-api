@@ -43,6 +43,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Test files
+test_*.py
+
 # Downloads (audio files)
 downloads/
 *.mp3
