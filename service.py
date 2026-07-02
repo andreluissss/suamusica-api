@@ -275,23 +275,31 @@ class YouTubeService:
             return None
 
         def _get_stream_url():
+            errors = []
+            
             # 1. Tenta extração direta (mesmo método do pytube)
             try:
                 return _fetch_direct()
-            except Exception:
-                pass
+            except Exception as e:
+                errors.append(f"direct: {str(e)[:100]}")
             
             # 2. Tenta yt-dlp
-            result = _fetch_from_ytdlp()
-            if result:
-                return result
+            try:
+                result = _fetch_from_ytdlp()
+                if result:
+                    return result
+            except Exception as e:
+                errors.append(f"ytdlp: {str(e)[:100]}")
             
             # 3. Tenta Piped
-            result = _fetch_from_piped()
-            if result:
-                return result
+            try:
+                result = _fetch_from_piped()
+                if result:
+                    return result
+            except Exception as e:
+                errors.append(f"piped: {str(e)[:100]}")
             
-            raise Exception("Todas as fontes falharam")
+            raise Exception(f"Todas as fontes falharam: {' | '.join(errors)}")
 
         return await loop.run_in_executor(None, _get_stream_url)
     
