@@ -117,125 +117,104 @@ class YouTubeService:
         
         return videos
     
-    async def _get_stream_from_invidious(self, video_id: str) -> dict:
-        """Fallback: obtém stream URL via Invidious (YouTube frontend alternativo)"""
-        import requests as sync_requests
-        
-        # Lista de instâncias Invidious públicas
-        instances = [
-            f"https://invidious.snopyta.org/api/v1/videos/{video_id}",
-            f"https://yewtu.be/api/v1/videos/{video_id}",
-            f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
-            f"https://invidious.projectsegfau.lt/api/v1/videos/{video_id}",
-            f"https://inv.riverside.rocks/api/v1/videos/{video_id}",
-        ]
-        
-        for api_url in instances:
-            try:
-                resp = sync_requests.get(api_url, timeout=10, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                })
-                if resp.status_code == 200:
-                    data = resp.json()
-                    
-                    # Junta formatos de áudio de formatStreams e adaptiveFormats
-                    all_audio = []
-                    
-                    for f in data.get('formatStreams', []):
-                        if f.get('type', '').startswith('audio'):
-                            all_audio.append(f)
-                    
-                    for f in data.get('adaptiveFormats', []):
-                        if f.get('type', '').startswith('audio'):
-                            all_audio.append(f)
-                    
-                    if all_audio:
-                        # Pega o de melhor qualidade (maior bitrate)
-                        best = max(all_audio, key=lambda x: x.get('bitrate', 0) or 0)
-                        
-                        thumbnail = ''
-                        if data.get('videoThumbnails'):
-                            thumbnail = data['videoThumbnails'][0].get('url', '')
-                        
-                        return {
-                            'stream_url': best.get('url'),
-                            'duration': data.get('lengthSeconds', 0),
-                            'title': data.get('title', ''),
-                            'thumbnail': thumbnail,
-                            'format': best.get('encoding', ''),
-                            'ext': best.get('container', 'webm'),
-                        }
-            except:
-                continue
-        
-        raise Exception("Nenhuma instância Invidious respondeu")
-
     async def get_audio_stream_url(self, video_id: str) -> dict:
         """
         Extrai a URL de stream de áudio crua do YouTube.
-        Primeiro tenta yt-dlp, se falhar por bloqueio do YouTube usa Invidious como fallback.
+        Tenta múltiplos clientes (iOS, android, web) para evitar bloqueio.
         Não baixa nada no servidor, apenas retorna a URL direta do áudio (m4a, webm, etc.).
         """
         loop = asyncio.get_event_loop()
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        def _get_stream_url():
-            try:
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                    'extractor_args': {
-                        'youtube': {
-                            'player_client': ['android', 'android_embedded'],
-                            'skip': ['dash', 'hls'],
-                        }
-                    },
-                    'writesubtitles': False,
-                    'writeautomaticsub': False,
-                    'no_call_home': True,
-                }
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    
-                    if info:
-                        formats = info.get('formats', [])
-                        audio_formats = [
-                            f for f in formats 
-                            if f.get('acodec') != 'none' and f.get('url') 
-                            and f.get('protocol') in ('https', 'http')
-                        ]
-                        audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-                        
-                        if audio_formats:
-                            best = audio_formats[0]
-                            return {
-                                'stream_url': best.get('url'),
-                                'duration': info.get('duration', 0),
-                                'title': info.get('title', ''),
-                                'thumbnail': info.get('thumbnail', ''),
-                                'format': best.get('format', ''),
-                                'ext': best.get('ext', ''),
-                            }
-                    
-                raise Exception("Nenhum formato de áudio encontrado")
-            except Exception as e:
-                error_msg = str(e)
-                # Se for erro de bot detection, sinaliza para usar fallback
-                if 'Sign in' in error_msg or 'bot' in error_msg.lower():
-                    raise Exception(f"FALLBACK_NEEDED: {error_msg}")
-                raise
+        # Lista de configurações de cliente para tentar (do menos restritivo ao mais)
+        client_configs = [
+            # iOS - geralmente menos restritivo
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'download': False,
+                'extract_flat': False,
+                'user_agent': 'com.google.ios.youtube/19.45.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X)',
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['ios'],
+                        'skip': ['dash', 'hls'],
+                    }
+                },
+                'writesubtitles': False,
+                'writeautomaticsub': False,
+                'no_call_home': True,
+            },
+            # Android
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'download': False,
+                'extract_flat': False,
+                'user_agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'android_embedded'],
+                        'skip': ['dash', 'hls'],
+                    }
+                },
+                'writesubtitles': False,
+                'writeautomaticsub': False,
+                'no_call_home': True,
+            },
+            # Web (último recurso)
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'download': False,
+                'extract_flat': False,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'writesubtitles': False,
+                'writeautomaticsub': False,
+                'no_call_home': True,
+            },
+        ]
         
-        try:
-            return await loop.run_in_executor(None, _get_stream_url)
-        except Exception as e:
-            if 'FALLBACK_NEEDED' in str(e):
-                # YouTube bloqueou, tenta Invidious
-                return await self._get_stream_from_invidious(video_id)
-            raise Exception(f"Erro ao extrair URL de áudio: {str(e)}")
+        def _try_extract(ydl_opts):
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info:
+                    formats = info.get('formats', [])
+                    audio_formats = [
+                        f for f in formats 
+                        if f.get('acodec') != 'none' and f.get('url') 
+                        and f.get('protocol') in ('https', 'http')
+                    ]
+                    audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
+                    if audio_formats:
+                        best = audio_formats[0]
+                        return {
+                            'stream_url': best.get('url'),
+                            'duration': info.get('duration', 0),
+                            'title': info.get('title', ''),
+                            'thumbnail': info.get('thumbnail', ''),
+                            'format': best.get('format', ''),
+                            'ext': best.get('ext', ''),
+                        }
+            return None
+        
+        def _get_stream_url():
+            last_error = None
+            for i, opts in enumerate(client_configs):
+                try:
+                    result = _try_extract(opts)
+                    if result:
+                        return result
+                except Exception as e:
+                    last_error = str(e)
+                    # Se não for erro de bot detection, propaga
+                    if 'Sign in' not in str(e) and 'bot' not in str(e).lower():
+                        raise
+                    continue
+            
+            raise Exception(f"Todos os clientes falharam. Último erro: {last_error}")
+        
+        return await loop.run_in_executor(None, _get_stream_url)
     
     def processar_midia(
         self, 
