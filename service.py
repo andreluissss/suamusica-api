@@ -117,127 +117,158 @@ class YouTubeService:
         
         return videos
     
-    def _get_audio_from_formats(self, info):
-        """Extrai o melhor formato de áudio das informações do vídeo."""
-        formats = info.get('formats', [])
-        audio_formats = [
-            f for f in formats 
-            if f.get('acodec') != 'none' and f.get('url')
-            and f.get('protocol') in ('https', 'http')
-        ]
-        audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-        if audio_formats:
-            best = audio_formats[0]
-            return {
-                'stream_url': best.get('url'),
-                'duration': info.get('duration', 0),
-                'title': info.get('title', ''),
-                'thumbnail': info.get('thumbnail', ''),
-                'format': best.get('format', ''),
-                'ext': best.get('ext', ''),
-            }
-        return None
-
     async def get_audio_stream_url(self, video_id: str) -> dict:
         """
-        Extrai a URL de stream de áudio crua do YouTube.
-        Tenta múltiplos extractors e clientes para evitar bloqueio.
+        Extrai a URL de stream de áudio crua do YouTube via Piped API.
         Não baixa nada no servidor, apenas retorna a URL direta do áudio (m4a, webm, etc.).
         """
+        import requests as sync_requests
         loop = asyncio.get_event_loop()
-        url = f"https://www.youtube.com/watch?v={video_id}"
         
-        def _get_stream_url():
-            # Tenta múltiplas estratégias em sequência
-            strategies = [
-                # 1) Android TV client (menos restritivo)
-                {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'user_agent': 'Mozilla/5.0 (Linux; Android 12; SM-T500) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                    'extractor_args': {'youtube': {'player_client': ['android_tv'], 'skip': ['webpage', 'dash', 'hls']}},
-                },
-                # 2) iOS
-                {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'user_agent': 'com.google.ios.youtube/19.45.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X)',
-                    'extractor_args': {'youtube': {'player_client': ['ios'], 'skip': ['webpage', 'dash', 'hls']}},
-                },
-                # 3) Android
-                {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'user_agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
-                    'extractor_args': {'youtube': {'player_client': ['android', 'android_embedded'], 'skip': ['webpage', 'dash', 'hls']}},
-                },
-                # 4) Web creator
-                {
-                    'quiet': True, 
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                    'extractor_args': {'youtube': {'player_client': ['web_creator'], 'skip': ['webpage', 'dash', 'hls']}},
-                },
-                # 5) TV HTML5
-                {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'user_agent': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36',
-                    'extractor_args': {'youtube': {'player_client': ['tv'], 'skip': ['webpage', 'dash', 'hls']}},
-                },
+        def _fetch_from_piped():
+            """Usa Piped API (YouTube frontend alternativo) para obter URL de áudio"""
+            piped_instances = [
+                f"https://pipedapi.kavin.rocks/streams/{video_id}",
+                f"https://pipedapi.r4fo.com/streams/{video_id}",
+                f"https://pipedapi.reallyaweso.me/streams/{video_id}",
+                f"https://pipedapi.smnz.de/streams/{video_id}",
+                f"https://api.piped.mha.fi/streams/{video_id}",
             ]
             
-            last_error = None
-            for opts in strategies:
+            for api_url in piped_instances:
                 try:
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        if info:
-                            result = self._get_audio_from_formats(info)
-                            if result:
-                                return result
-                except Exception as e:
-                    last_error = str(e)
-                    if 'Sign in' in str(e) or 'bot' in str(e).lower():
-                        continue
-                    raise
+                    resp = sync_requests.get(
+                        api_url,
+                        timeout=15,
+                        headers={
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                            'Accept': 'application/json',
+                        }
+                    )
+                    
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        audio_streams = data.get('audioStreams', [])
+                        
+                        if audio_streams:
+                            # Pega o melhor stream de áudio (maior bitrate)
+                            best = max(audio_streams, key=lambda x: x.get('bitrate', 0) or 0)
+                            return {
+                                'stream_url': best.get('url'),
+                                'duration': data.get('duration', 0),
+                                'title': data.get('title', ''),
+                                'thumbnail': data.get('thumbnailUrl', data.get('uploaderAvatar', '')),
+                                'format': best.get('quality', ''),
+                                'ext': best.get('format', 'webm').split('/')[-1].split(';')[0],
+                            }
+                        
+                        # Se não achou audioStreams, tenta videoStreams com audio
+                        video_streams = data.get('videoStreams', [])
+                        if video_streams:
+                            # Pega o menor (áudio incluso)
+                            best = video_streams[-1]  # menor qualidade = menos vídeo
+                            return {
+                                'stream_url': best.get('url'),
+                                'duration': data.get('duration', 0),
+                                'title': data.get('title', ''),
+                                'thumbnail': data.get('thumbnailUrl', data.get('uploaderAvatar', '')),
+                                'format': best.get('quality', ''),
+                                'ext': best.get('format', 'mp4').split('/')[-1].split(';')[0],
+                            }
+                except Exception:
+                    continue
             
-            # Último recurso: tenta com formato básico
+            raise Exception("Nenhuma instância Piped respondeu com stream de áudio")
+
+        def _fetch_from_invidious():
+            """Fallback: tenta Invidious API"""
+            invidious_instances = [
+                f"https://invidious.snopyta.org/api/v1/videos/{video_id}",
+                f"https://invidious.privacydev.net/api/v1/videos/{video_id}",
+                f"https://yt.artemislena.eu/api/v1/videos/{video_id}",
+            ]
+            
+            for api_url in invidious_instances:
+                try:
+                    resp = sync_requests.get(api_url, timeout=10, headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    })
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        all_audio = []
+                        for f in data.get('formatStreams', []):
+                            if f.get('type', '').startswith('audio'):
+                                all_audio.append(f)
+                        for f in data.get('adaptiveFormats', []):
+                            if f.get('type', '').startswith('audio'):
+                                all_audio.append(f)
+                        if all_audio:
+                            best = max(all_audio, key=lambda x: x.get('bitrate', 0) or 0)
+                            thumbnail = ''
+                            if data.get('videoThumbnails'):
+                                thumbnail = data['videoThumbnails'][0].get('url', '')
+                            return {
+                                'stream_url': best.get('url'),
+                                'duration': data.get('lengthSeconds', 0),
+                                'title': data.get('title', ''),
+                                'thumbnail': thumbnail,
+                                'format': best.get('encoding', ''),
+                                'ext': best.get('container', 'webm'),
+                            }
+                except Exception:
+                    continue
+            raise Exception("Nenhuma instância Invidious respondeu")
+
+        def _try_ytdlp():
+            """Tenta yt-dlp como primeira opção"""
             try:
-                basic_opts = {
+                url = f"https://www.youtube.com/watch?v={video_id}"
+                opts = {
                     'quiet': True,
                     'no_warnings': True,
                     'download': False,
                     'extract_flat': False,
                     'format': 'bestaudio[protocol^=http]',
+                    'user_agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+                    'extractor_args': {'youtube': {'player_client': ['android_tv'], 'skip': ['webpage', 'dash', 'hls']}},
                 }
-                with yt_dlp.YoutubeDL(basic_opts) as ydl:
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if info:
-                        url_audio = info.get('url', '')
-                        if url_audio:
+                        formats = info.get('formats', [])
+                        audio = [f for f in formats if f.get('acodec') != 'none' and f.get('url') and f.get('protocol') in ('https', 'http')]
+                        audio.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
+                        if audio:
+                            best = audio[0]
                             return {
-                                'stream_url': url_audio,
+                                'stream_url': best.get('url'),
                                 'duration': info.get('duration', 0),
                                 'title': info.get('title', ''),
                                 'thumbnail': info.get('thumbnail', ''),
-                                'format': '',
-                                'ext': info.get('ext', 'm4a'),
+                                'format': best.get('format', ''),
+                                'ext': best.get('ext', ''),
                             }
-            except Exception as e:
-                last_error = str(e)
+            except Exception:
+                pass
+            return None
+
+        def _get_stream_url():
+            # 1. Tenta yt-dlp
+            result = _try_ytdlp()
+            if result:
+                return result
             
-            raise Exception(f"Todas as estratégias falharam. Último erro: {last_error}")
+            # 2. Tenta Piped API
+            try:
+                return _fetch_from_piped()
+            except Exception:
+                pass
+            
+            # 3. Tenta Invidious
+            try:
+                return _fetch_from_invidious()
+            except Exception as e:
+                raise Exception(f"Todas as fontes falharam. Último erro: {str(e)}")
         
         return await loop.run_in_executor(None, _get_stream_url)
     
@@ -261,10 +292,8 @@ class YouTubeService:
         try:
             print(f"[FFmpeg] Processando: {caminho_entrada} -> {caminho_saida}")
             
-            # Constrói comando FFmpeg via subprocess
             cmd = ['ffmpeg', '-i', caminho_entrada]
             
-            # Mapeia kwargs para argumentos FFmpeg
             for key, value in kwargs.items():
                 if key == 'acodec':
                     cmd.extend(['-acodec', str(value)])
@@ -285,27 +314,22 @@ class YouTubeService:
             
             print(f"[FFmpeg] Comando: {' '.join(cmd)}")
             
-            # Executa o processamento
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minutos timeout
+                timeout=300
             )
             
             if result.returncode != 0:
                 print(f"[FFmpeg] Erro no processamento: {result.stderr}")
                 return False
             
-            # Verifica se o arquivo de saída foi criado
             if os.path.exists(caminho_saida):
                 print(f"[FFmpeg] Processamento concluído com sucesso: {caminho_saida}")
-                
-                # Deleta arquivo original após conversão bem-sucedida
                 if os.path.exists(caminho_entrada):
                     os.remove(caminho_entrada)
                     print(f"[FFmpeg] Arquivo original deletado: {caminho_entrada}")
-                
                 return True
             else:
                 print(f"[FFmpeg] Erro: Arquivo de saída não foi criado")
@@ -340,7 +364,6 @@ class YouTubeService:
         
         def _download():
             try:
-                # Baixa áudio no formato original
                 ydl_opts = {
                     'format': 'bestaudio',
                     'quiet': True,
@@ -354,7 +377,6 @@ class YouTubeService:
                     if not info:
                         raise Exception("Não foi possível baixar o vídeo")
                     
-                    # Encontra o arquivo baixado
                     downloaded_file = None
                     for ext in ['m4a', 'webm', 'mp4']:
                         test_file = self.download_dir / f"{video_id}.{ext}"
@@ -365,14 +387,12 @@ class YouTubeService:
                     if not downloaded_file:
                         raise Exception("Arquivo baixado não encontrado")
                     
-                    # Converte para o formato desejado
                     output_file = str(self.download_dir / f"{video_id}.{output_format}")
                     
-                    # Argumentos FFmpeg para conversão de áudio
                     ffmpeg_args = {
                         'acodec': 'libmp3lame' if output_format == 'mp3' else 'aac',
                         'ab': '192k',
-                        'vn': None,  # Sem vídeo
+                        'vn': None,
                     }
                     
                     success = self.processar_midia(downloaded_file, output_file, **ffmpeg_args)
@@ -380,7 +400,6 @@ class YouTubeService:
                     if not success:
                         raise Exception("Falha na conversão FFmpeg")
                     
-                    # Retorna informações do arquivo convertido
                     file_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
                     duration = info.get('duration', 0)
                     
