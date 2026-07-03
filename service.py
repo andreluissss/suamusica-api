@@ -1,6 +1,6 @@
 """
-Servico para integracao com yt-dlp.
-Responsavel por buscar metadados e baixar audio do YouTube.
+Servico para integracao com YouTube.
+Usa Piped API (funciona em cloud), yt-dlp (local) e YouTube API (fallback).
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import subprocess
 
 
 class YouTubeService:
-    """Servico para interacao com YouTube usando yt-dlp."""
+    """Servico para interacao com YouTube."""
 
     _COMMON_WORDS = {'top', 'best', 'hits', 'mix', 'remix', 'playlist', 'music', 'musica',
                      'songs', 'musicas', 'ao vivo', 'live', 'cover', 'edit', 'version',
@@ -54,18 +54,7 @@ class YouTubeService:
         return 'general'
 
     def _build_intelligent_query(self, query: str, search_type: str) -> str:
-        if search_type == 'artist':
-            return f'"{query}" musica oficial'
-        return query
-
-    def _is_artist_or_band_query(self, query: str) -> bool:
-        q = query.lower().strip()
-        if q in self._KNOWN_ARTISTS:
-            return True
-        for a in self._KNOWN_ARTISTS:
-            if len(a.split()) >= 2 and a in q:
-                return True
-        return False
+        return f'"{query}" musica oficial' if search_type == 'artist' else query
 
     def _filter_by_artist(self, entries: List[dict], artist_name: str) -> List[dict]:
         al = artist_name.lower().strip()
@@ -75,22 +64,18 @@ class YouTubeService:
                 continue
             ch = (e.get('channel', '') or e.get('uploader', '') or '').lower()
             ti = (e.get('title', '') or '').lower()
-            if al in ch or al in ti or all(p in ti for p in al.split()) or all(p in ch for p in al.split()):
+            if al in ch or al in ti or all(p in ti for p in al.split()):
                 filtered.append(e)
         return filtered if filtered else entries
 
     def _get_ydl_opts(self, extract_flat=True, max_results=10) -> dict:
-        """Opcoes base do yt-dlp com headers anti-bloqueio."""
         opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': extract_flat,
-            'noplaylist': False,
+            'quiet': True, 'no_warnings': True,
+            'extract_flat': extract_flat, 'noplaylist': False,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
             },
         }
         if extract_flat:
@@ -132,7 +117,7 @@ class YouTubeService:
                         info = ydl.extract_info(search_url, download=False)
                         if info and 'entries' in info:
                             entries = list(info['entries'])
-                            if search_type == 'artist' and self._is_artist_or_band_query(query):
+                            if search_type == 'artist' and query.lower().strip() in self._KNOWN_ARTISTS:
                                 entries = self._filter_by_artist(entries, query)
                             video_entries = []
                             for entry in entries:
@@ -178,6 +163,7 @@ class YouTubeService:
                         except Exception:
                             pass
 
+                # Anexa URLs de stream/download
                 if mode == 'listen' and videos:
                     try:
                         videos = self._attach_stream_urls(videos)
@@ -195,17 +181,37 @@ class YouTubeService:
 
         return await loop.run_in_executor(None, _search)
 
+    def _get_audio_url_piped(self, video_id: str) -> Optional[str]:
+        """Estrategia PRINCIPAL: Piped API (funciona em clouds como Render)."""
+        instances = [
+            "https://pipedapi.kavin.rocks",
+            "https://pipedapi.r4fo.com",
+            "https://pipedapi.smnz.de",
+        ]
+        import requests as req
+        for instance in instances:
+            try:
+                r = req.get(f"{instance}/streams/{video_id}", timeout=15,
+                           headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'})
+                if r.status_code == 200:
+                    data = r.json()
+                    audio = data.get('audioStreams', [])
+                    if audio:
+                        best = max(audio, key=lambda x: x.get('bitrate', 0) or 0)
+                        return best.get('url')
+            except Exception:
+                continue
+        return None
+
     def _get_audio_url_ytdlp(self, video_id: str) -> Optional[str]:
-        """Obtem URL de audio usando yt-dlp (estrategia PRINCIPAL - funciona localmente)."""
+        """Fallback 1: yt-dlp."""
         try:
-            url = f"https://www.youtube.com/watch?v={video_id}"
             opts = self._get_ydl_opts(extract_flat=False)
             opts['format'] = 'bestaudio/best'
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
                 if info:
-                    formats = info.get('formats', [])
-                    audio = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
+                    audio = [f for f in info.get('formats', []) if f.get('acodec') != 'none' and f.get('url')]
                     if audio:
                         audio.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
                         return audio[0].get('url')
@@ -214,37 +220,25 @@ class YouTubeService:
         return None
 
     def _get_audio_url_api(self, video_id: str) -> Optional[str]:
-        """Fallback: YouTube API Android."""
+        """Fallback 2: YouTube API."""
         try:
             import requests as req
             import urllib.parse
-            api_keys = ["AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"]
-            clients = [
-                {"clientName": "ANDROID", "clientVersion": "19.09.37"},
-                {"clientName": "WEB", "clientVersion": "2.20240701.00.00"},
-            ]
-            for key in api_keys:
-                for client in clients:
-                    try:
-                        r = req.post(f"https://www.youtube.com/youtubei/v1/player?key={key}",
-                            json={"context": {"client": client}, "videoId": video_id},
-                            headers={"Content-Type": "application/json"}, timeout=10)
-                        if r.status_code == 200:
-                            data = r.json()
-                            for fmt in data.get('streamingData', {}).get('adaptiveFormats', []):
-                                mime = fmt.get('mimeType', '')
-                                if mime.startswith('audio/'):
-                                    url = fmt.get('url', '')
-                                    if url:
-                                        return url
-                                    cipher = fmt.get('signatureCipher', '') or fmt.get('cipher', '')
-                                    if cipher:
-                                        parsed = urllib.parse.parse_qs(cipher)
-                                        url = parsed.get('url', [''])[0]
-                                        if url:
-                                            return url
-                    except Exception:
-                        continue
+            r = req.post("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+                json={"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.09.37"}}, "videoId": video_id},
+                headers={"Content-Type": "application/json"}, timeout=10)
+            if r.status_code == 200:
+                for fmt in r.json().get('streamingData', {}).get('adaptiveFormats', []):
+                    if 'audio/' in fmt.get('mimeType', ''):
+                        url = fmt.get('url', '')
+                        if url:
+                            return url
+                        cipher = fmt.get('signatureCipher', '') or fmt.get('cipher', '')
+                        if cipher:
+                            parsed = urllib.parse.parse_qs(cipher)
+                            url = parsed.get('url', [''])[0]
+                            if url:
+                                return url
         except Exception:
             pass
         return None
@@ -253,7 +247,7 @@ class YouTubeService:
         for v in videos:
             if v.video_id:
                 try:
-                    url = self._get_audio_url_ytdlp(v.video_id)
+                    url = self._get_audio_url_piped(v.video_id)
                     if url:
                         v.stream_url = url
                 except Exception:
@@ -264,7 +258,7 @@ class YouTubeService:
         for v in videos:
             if v.video_id:
                 try:
-                    url = self._get_audio_url_ytdlp(v.video_id)
+                    url = self._get_audio_url_piped(v.video_id)
                     if url:
                         v.stream_url = url
                 except Exception:
@@ -310,45 +304,41 @@ class YouTubeService:
         return await loop.run_in_executor(None, _extract)
 
     async def get_audio_stream_url(self, video_id: str) -> dict:
-        """Obtem URL de stream de audio. yt-dlp principal, API fallback."""
+        """Obtem URL de stream. Piped API > yt-dlp > YouTube API."""
         loop = asyncio.get_event_loop()
 
         def _get():
-            # 1. yt-dlp (principal - funciona)
-            try:
-                url = self._get_audio_url_ytdlp(video_id)
-                if url:
-                    return {'stream_url': url, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': ''}
-            except Exception:
-                pass
-            # 2. API fallback
-            try:
-                url = self._get_audio_url_api(video_id)
-                if url:
-                    return {'stream_url': url, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': ''}
-            except Exception:
-                pass
-            return {'stream_url': None, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': ''}
+            errors = []
+            url = self._get_audio_url_piped(video_id)
+            if url:
+                return {'stream_url': url, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': ''}
+            errors.append("piped: sem stream URL")
+            url = self._get_audio_url_ytdlp(video_id)
+            if url:
+                return {'stream_url': url, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': ''}
+            errors.append("ytdlp: sem stream URL")
+            url = self._get_audio_url_api(video_id)
+            if url:
+                return {'stream_url': url, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': ''}
+            errors.append("api: sem stream URL")
+            return {'stream_url': None, 'duration': 0, 'title': '', 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg', 'format': '', 'ext': '', 'error': ' | '.join(errors)}
 
         return await loop.run_in_executor(None, _get)
 
     async def get_direct_download_url(self, video_id: str) -> dict:
-        """Obtem URL de download direto. yt-dlp principal, API fallback."""
+        """Obtem URL de download. Piped API > yt-dlp > YouTube API."""
         loop = asyncio.get_event_loop()
 
         def _get():
-            try:
-                url = self._get_audio_url_ytdlp(video_id)
-                if url:
-                    return {'download_url': url, 'ext': 'm4a', 'title': '', 'duration': 0, 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'}
-            except Exception:
-                pass
-            try:
-                url = self._get_audio_url_api(video_id)
-                if url:
-                    return {'download_url': url, 'ext': 'm4a', 'title': '', 'duration': 0, 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'}
-            except Exception:
-                pass
+            url = self._get_audio_url_piped(video_id)
+            if url:
+                return {'download_url': url, 'ext': 'm4a', 'title': '', 'duration': 0, 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'}
+            url = self._get_audio_url_ytdlp(video_id)
+            if url:
+                return {'download_url': url, 'ext': 'm4a', 'title': '', 'duration': 0, 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'}
+            url = self._get_audio_url_api(video_id)
+            if url:
+                return {'download_url': url, 'ext': 'm4a', 'title': '', 'duration': 0, 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'}
             return {'download_url': None, 'ext': 'unknown', 'title': '', 'duration': 0, 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'}
 
         return await loop.run_in_executor(None, _get)
