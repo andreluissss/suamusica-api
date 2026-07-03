@@ -45,6 +45,8 @@ Thumbs.db
 
 # Test files
 test_*.py
+output.txt
+task_progress.md
 
 # Downloads (audio files)
 downloads/

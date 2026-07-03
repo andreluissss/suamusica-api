@@ -1,13 +1,13 @@
 """
 API RESTful para scraping e processamento de mídia do YouTube.
-Implementa endpoints de busca, download e streaming.
+Implementa endpoints de busca inteligente, download, streaming e playlists.
 """
 
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
-from typing import Optional
+from typing import Optional, List
 import os
 from dotenv import load_dotenv
 
@@ -18,8 +18,13 @@ from schemas import (
     DownloadResponse,
     StreamUrlRequest,
     StreamUrlResponse,
+    PlaylistRequest,
+    PlaylistResponse,
+    PlaylistDownloadRequest,
+    BatchDownloadResponse,
     ErrorResponse,
-    VideoMetadata
+    VideoMetadata,
+    PlaylistMetadata
 )
 from service import YouTubeService
 
@@ -29,19 +34,20 @@ load_dotenv()
 # Inicialização da aplicação
 app = FastAPI(
     title="YouTube Media Processor API",
-    description="API para busca, download e conversão de áudio do YouTube com FFmpeg automático.",
-    version="2.0.0"
+    description="API para busca inteligente, download e streaming de áudio do YouTube. "
+                "Busca inteligente detecta artistas, músicas e playlists automaticamente "
+                "(baseado no SanpTune). Suporta streaming online e download direto.",
+    version="3.0.0"
 )
 
 # Configuração de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, especifique as origens permitidas
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 
 # Inicialização do serviço
@@ -54,7 +60,14 @@ async def root():
     return {
         "status": "online",
         "service": "YouTube Media Processor API",
-        "version": "1.0.0"
+        "version": "3.0.0",
+        "features": [
+            "Busca inteligente com detecção de artista/música/playlist",
+            "Stream de áudio para ouvir online",
+            "Download direto de áudio original (sem conversão)",
+            "Download com conversão (mp3, m4a, etc.)",
+            "Suporte a playlists com download em lote"
+        ]
     }
 
 
@@ -71,32 +84,135 @@ async def health_check():
 )
 async def search_videos(request: SearchRequest):
     """
-    Busca vídeos no YouTube.
+    Busca inteligente no YouTube com detecção automática do tipo de busca.
+    
+    - Se pesquisar "Panda": retorna apenas músicas do artista Panda
+    - Se pesquisar "Tubarões": retorna apenas músicas do Vitor Hugo e Tubarões
+    - Se pesquisar "música - artista": busca específica da música
+    - Se pesquisar "playlist": inclui playlists nos resultados
     
     Args:
-        request: Objeto com termo de busca e número máximo de resultados
+        request: Objeto com termo de busca, modo (listen/download) e filtros
         
     Returns:
-        SearchResponse com lista de vídeos encontrados
-        
-    Raises:
-        HTTPException: Erro na busca
+        SearchResponse com lista de vídeos, playlists e tipo de busca
     """
     try:
-        results = await youtube_service.search_videos(
+        results, playlists, search_type = await youtube_service.search_videos(
             query=request.query,
-            max_results=request.max_results
+            max_results=request.max_results,
+            mode=request.mode,
+            include_playlists=request.include_playlists,
+            type_filter=request.type_filter
         )
         
         return SearchResponse(
             success=True,
             results=results,
-            total=len(results)
+            playlists=playlists,
+            total=len(results) + len(playlists),
+            search_type=search_type
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao buscar vídeos: {str(e)}"
+        )
+
+
+@app.post(
+    "/playlist",
+    response_model=PlaylistResponse,
+    tags=["Playlist"]
+)
+async def get_playlist(request: PlaylistRequest):
+    """
+    Obtém todos os itens de uma playlist do YouTube.
+    
+    Args:
+        request: Objeto com ID da playlist e número máximo de resultados
+        
+    Returns:
+        PlaylistResponse com metadados da playlist e lista de vídeos
+    """
+    try:
+        playlist_title, playlist_url, channel, total, videos = await youtube_service.get_playlist_items(
+            playlist_id=request.playlist_id,
+            max_results=request.max_results
+        )
+        
+        # Anexa URLs de stream para cada vídeo (modo listen)
+        videos = youtube_service._attach_stream_urls(videos)
+        
+        return PlaylistResponse(
+            success=True,
+            playlist_title=playlist_title,
+            playlist_url=playlist_url,
+            channel=channel,
+            video_count=total,
+            videos=videos
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao obter playlist: {str(e)}"
+        )
+
+
+@app.post(
+    "/playlist/download",
+    response_model=BatchDownloadResponse,
+    tags=["Playlist"]
+)
+async def download_playlist(request: PlaylistDownloadRequest):
+    """
+    Baixa todos os áudios de uma playlist no formato original ou convertido.
+    
+    Args:
+        request: Objeto com ID da playlist, formato e limite
+        
+    Returns:
+        BatchDownloadResponse com resultados de todos os downloads
+    """
+    try:
+        # Primeiro obtém os itens da playlist
+        playlist_title, playlist_url, channel, total, videos = await youtube_service.get_playlist_items(
+            playlist_id=request.playlist_id,
+            max_results=request.max_results
+        )
+        
+        if not videos:
+            return BatchDownloadResponse(
+                success=True,
+                message="Playlist vazia ou não encontrada",
+                total=0,
+                downloaded=0,
+                files=[]
+            )
+        
+        # IDs dos vídeos para baixar
+        video_ids = [v.video_id for v in videos if v.video_id]
+        
+        # Baixa todos em lote
+        results = await youtube_service.download_batch(
+            video_ids=video_ids,
+            output_format=request.format
+        )
+        
+        downloaded_count = sum(1 for r in results if r.get('success'))
+        
+        return BatchDownloadResponse(
+            success=True,
+            message=f"Playlist '{playlist_title}': {downloaded_count} de {len(results)} músicas baixadas",
+            total=len(results),
+            downloaded=downloaded_count,
+            files=results
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao baixar playlist: {str(e)}"
         )
 
 
@@ -107,34 +223,65 @@ async def search_videos(request: SearchRequest):
 )
 async def download_audio(request: DownloadRequest):
     """
-    Baixa áudio do YouTube e converte usando FFmpeg.
+    Baixa áudio do YouTube no formato original ou converte usando FFmpeg.
+    
+    Modos:
+    - Modo 'direct' (padrão): retorna URL direta do áudio original sem processar no servidor
+    - Modo 'server': baixa e processa no servidor, retorna link para download
+    
+    Formatos:
+    - 'original': mantém o formato original do servidor (webm, m4a, opus)
+    - 'mp3': converte para MP3 (requer FFmpeg)
+    - 'm4a': converte para M4A AAC (requer FFmpeg)
     
     Args:
-        request: Objeto com ID do vídeo e formato de saída
+        request: Objeto com ID do vídeo, formato e modo de download
         
     Returns:
         DownloadResponse com informações do arquivo baixado
-        
-    Raises:
-        HTTPException: Erro no download ou conversão
     """
     try:
-        filepath, file_size, duration = await youtube_service.download_audio(
-            video_id=request.video_id,
-            output_format=request.format
-        )
-        
-        filename = os.path.basename(filepath)
-        download_url = f"/files/{filename}"
-        
-        return DownloadResponse(
-            success=True,
-            message=f"Áudio baixado e convertido para {request.format}",
-            download_url=download_url,
-            file_size=file_size,
-            duration=duration,
-            format=request.format
-        )
+        if request.download_mode == 'direct':
+            # Modo direto: retorna URL de download sem processar no servidor
+            result = await youtube_service.get_direct_download_url(
+                video_id=request.video_id
+            )
+            
+            filename = f"{result.get('title', 'audio')}.{result.get('ext', 'webm')}"
+            # Sanitiza nome do arquivo
+            filename = "".join(c for c in filename if c.isalnum() or c in ' ._-()').strip()[:100]
+            
+            return DownloadResponse(
+                success=True,
+                message=f"URL de download direto obtida: {result.get('ext', 'original')}",
+                download_url=result.get('download_url'),
+                file_size=0,
+                duration=result.get('duration', 0),
+                format=result.get('ext', 'original'),
+                ext=result.get('ext'),
+                filename=filename,
+                title=result.get('title')
+            )
+        else:
+            # Modo servidor: baixa e processa no servidor
+            filepath, file_size, duration, ext = await youtube_service.download_audio(
+                video_id=request.video_id,
+                output_format=request.format if request.format != 'original' else 'original'
+            )
+            
+            filename = os.path.basename(filepath)
+            download_url = f"/files/{filename}"
+            
+            return DownloadResponse(
+                success=True,
+                message=f"Áudio baixado{' e convertido para ' + request.format if request.format != 'original' else ' no formato original'}",
+                download_url=download_url,
+                file_size=file_size,
+                duration=duration,
+                format=request.format if request.format != 'original' else ext,
+                ext=ext,
+                filename=filename
+            )
             
     except Exception as e:
         raise HTTPException(
@@ -150,8 +297,8 @@ async def download_audio(request: DownloadRequest):
 )
 async def get_stream_url(request: StreamUrlRequest):
     """
-    Obtém a URL direta do stream de áudio do YouTube.
-    Não baixa nada, apenas retorna a URL do áudio para reprodução/download direto.
+    Obtém a URL direta do stream de áudio do YouTube para ouvir online.
+    Não baixa nada no servidor, apenas retorna a URL do áudio.
     
     Args:
         request: Objeto com ID do vídeo
@@ -187,16 +334,13 @@ async def get_stream_url(request: StreamUrlRequest):
 )
 async def get_file(filename: str):
     """
-    Endpoint para download de arquivos processados.
+    Endpoint para download de arquivos processados no servidor.
     
     Args:
-        filename: Nome do arquivo (ex: video_id.mp3)
+        filename: Nome do arquivo
         
     Returns:
         FileResponse com o arquivo solicitado
-        
-    Raises:
-        HTTPException: Arquivo não encontrado
     """
     file_path = youtube_service.download_dir / filename
     
@@ -206,9 +350,19 @@ async def get_file(filename: str):
             detail="Arquivo não encontrado"
         )
     
+    media_type = "audio/mpeg"
+    if filename.endswith('.m4a'):
+        media_type = "audio/mp4"
+    elif filename.endswith('.webm'):
+        media_type = "audio/webm"
+    elif filename.endswith('.opus'):
+        media_type = "audio/opus"
+    elif filename.endswith('.ogg'):
+        media_type = "audio/ogg"
+    
     return FileResponse(
         path=str(file_path),
-        media_type="audio/mpeg" if filename.endswith('.mp3') else "audio/mp4",
+        media_type=media_type,
         filename=filename
     )
 
