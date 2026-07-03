@@ -1,7 +1,7 @@
 """
-Serviço para integração com yt-dlp.
-Responsável por buscar metadados e baixar áudio do YouTube.
-Implementa busca inteligente com detecção de artistas, músicas e playlists.
+Servico para integracao com yt-dlp.
+Responsavel por buscar metadados e baixar audio do YouTube.
+Implementa busca inteligente com deteccao de artistas, musicas e playlists.
 """
 
 import asyncio
@@ -20,27 +20,16 @@ import time
 
 
 class YouTubeService:
-    """Serviço para interação com YouTube usando yt-dlp.
-    
-    Recursos principais:
-    - Busca inteligente que detecta se o termo é artista, música ou playlist
-    - Gera URL de stream para ouvir online (modo listen)
-    - Gera URL de download direto do áudio original (modo download)
-    - Download e conversão de áudio via servidor (modo server)
-    - Suporte a playlists com download em lote
-    - Baseado no funcionamento do SanpTune para experiência otimizada
-    """
-    
-    # Lista de palavras comuns que indicam busca geral, não artista
-    _COMMON_WORDS = {'top', 'best', 'hits', 'mix', 'remix', 'playlist', 'music', 'música',
-                     'songs', 'músicas', 'ao vivo', 'live', 'cover', 'edit', 'version',
+    """Servico para interacao com YouTube usando yt-dlp."""
+
+    _COMMON_WORDS = {'top', 'best', 'hits', 'mix', 'remix', 'playlist', 'music', 'musica',
+                     'songs', 'musicas', 'ao vivo', 'live', 'cover', 'edit', 'version',
                      'oficial', 'official', 'video', 'clip', 'lyric', 'letra'}
-    
-    # Lista de canais/artistas conhecidos para auxiliar na detecção
+
     _KNOWN_ARTISTS = {
         'panda', 'vitor hugo', 'tubaroes', 'vitor hugo e tubaroes',
-        'henrique e juliano', 'jorge e mateus', 'zé neto e cristiano',
-        'marilia mendonça', 'gusttavo lima', 'luan santana',
+        'henrique e juliano', 'jorge e mateus', 'ze neto e cristiano',
+        'marilia mendonca', 'gusttavo lima', 'luan santana',
         'anitta', 'ludmilla', 'ivete sangalo', 'caetano veloso',
         'gilberto gil', 'seu jorge', 'djavan', 'milton nascimento',
         'elton john', 'the beatles', 'queen', 'michael jackson',
@@ -48,80 +37,42 @@ class YouTubeService:
         'mc hariel', 'mc livinho', 'mc kevin', 'mc don Juan',
         'mc ig', 'mc paiva', 'mc marcinho', 'mc bob rum',
     }
-    
+
     def __init__(self, download_dir: str = "./downloads"):
-        """
-        Inicializa o serviço com diretório de downloads.
-        
-        Args:
-            download_dir: Diretório onde os arquivos serão salvos
-        """
         self.download_dir = Path(download_dir)
         self.download_dir.mkdir(parents=True, exist_ok=True)
-    
+
     def _detect_search_type(self, query: str) -> str:
-        """
-        Detecta inteligentemente o tipo de busca:
-        - 'artist': quando o termo parece ser nome de artista/banda
-        - 'music': quando parece ser nome de música específica
-        - 'playlist': quando parece ser busca por playlist
-        - 'general': quando não se encaixa nos acima
-        
-        Baseado no comportamento do SanpTune.
-        """
         query_lower = query.lower().strip()
-        
-        # Se contém palavras comuns de playlist, é busca de playlist
         playlist_keywords = ['playlist', 'setlist', 'set list', 'podcast', 'album completo',
                             'full album', 'disco completo', 'discografia', 'discography',
-                            'collection', 'coletânea', 'coletanea']
+                            'collection', 'coletanea', 'coletanea']
         if any(kw in query_lower for kw in playlist_keywords):
             return 'playlist'
-        
-        # Se é explicitamente um nome de artista conhecido, busca só dele
         if query_lower in self._KNOWN_ARTISTS:
             return 'artist'
-        
-        # Verifica se o termo contém nome de artista conhecido
         for artist in self._KNOWN_ARTISTS:
             if artist in query_lower:
                 return 'artist'
-        
-        # Se contém " - " geralmente é "Artista - Música"
         if ' - ' in query:
             return 'music'
-        
-        # Se o termo tem 1-3 palavras e não contém palavras comuns, provável artista
         words = query_lower.split()
         if 1 <= len(words) <= 3:
             has_common = any(w in self._COMMON_WORDS for w in words)
             if not has_common:
                 return 'artist'
-        
-        # Se contém palavras de ação musical, provável música específica
-        music_actions = ['ouvir', 'ouça', 'escutar', 'tocar', 'play', 'reproduzir',
-                        'musica', 'música', 'song', 'track', 'single']
+        music_actions = ['ouvir', 'ouca', 'escutar', 'tocar', 'play', 'reproduzir',
+                        'musica', 'musica', 'song', 'track', 'single']
         if any(ma in query_lower for ma in music_actions):
             return 'music'
-        
         return 'general'
-    
+
     def _build_intelligent_query(self, query: str, search_type: str) -> str:
-        """
-        Constrói uma query de busca inteligente baseada no tipo detectado.
-        SanpTune-style: otimiza resultados para música, filtrando ruídos.
-        """
         if search_type == 'artist':
-            cleaned = query
-            return f'"{cleaned}" música oficial'
-        elif search_type == 'music':
-            return query
-        elif search_type == 'playlist':
-            return query
+            return f'"{query}" musica oficial'
         return query
-    
+
     def _is_artist_or_band_query(self, query: str) -> bool:
-        """Verifica se a query parece ser especificamente um artista/banda."""
         query_lower = query.lower().strip()
         if query_lower in self._KNOWN_ARTISTS:
             return True
@@ -129,9 +80,8 @@ class YouTubeService:
             if len(artist.split()) >= 2 and artist in query_lower:
                 return True
         return False
-    
+
     def _filter_by_artist(self, entries: List[dict], artist_name: str) -> List[dict]:
-        """Filtra resultados para mostrar apenas músicas do artista especificado."""
         artist_lower = artist_name.lower().strip()
         filtered = []
         for entry in entries:
@@ -150,48 +100,57 @@ class YouTubeService:
         if not filtered:
             return entries
         return filtered
-    
+
     def _artist_in_title(self, artist_lower: str, title: str) -> bool:
-        """Verifica se o nome do artista aparece como palavra completa no título."""
         parts = artist_lower.split()
         return all(part in title for part in parts)
-    
+
     def _get_ydl_options_search(self, max_results: int = 10) -> dict:
-        """Configurações do yt-dlp para busca."""
         return {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': True,
-            'playlistend': max_results * 3,
-            'noplaylist': False,
-            'match_filter': None,
+            'quiet': True, 'no_warnings': True, 'extract_flat': True,
+            'playlistend': max_results * 3, 'noplaylist': False, 'match_filter': None,
         }
-    
+
     def _get_ydl_options_playlist(self, max_results: int = 50) -> dict:
-        """Configurações para extrair playlist."""
+        return {
+            'quiet': True, 'no_warnings': True, 'extract_flat': 'in_playlist',
+            'playlistend': max_results, 'noplaylist': False,
+        }
+
+    def _get_anti_block_ydl_opts(self) -> dict:
+        """Opcoes do yt-dlp com medidas anti-bloqueio do YouTube."""
         return {
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': 'in_playlist',
-            'playlistend': max_results,
-            'noplaylist': False,
+            'extract_flat': False,
+            'format': 'bestaudio/best',
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'player_client': ['android', 'web'],
+                }
+            },
         }
-    
+
     async def search_videos(self, query: str, max_results: int = 10,
                            mode: str = 'listen', include_playlists: bool = True,
                            type_filter: str = 'auto') -> Tuple[List[VideoMetadata], List[PlaylistMetadata], str]:
-        """Busca vídeos no YouTube de forma ASSÍNCRONA com busca inteligente."""
         search_type = type_filter if type_filter != 'auto' else self._detect_search_type(query)
         intelligent_query = self._build_intelligent_query(query, search_type)
-        
         loop = asyncio.get_event_loop()
-        
+
         def _search():
             try:
                 ydl_opts = self._get_ydl_options_search(max_results)
                 videos = []
                 playlists = []
-                
+
                 if query.startswith(('http://', 'https://')):
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(query, download=False)
@@ -242,7 +201,7 @@ class YouTubeService:
                                 else:
                                     video_entries.append(entry)
                             videos = self._parse_video_info(video_entries[:max_results])
-                    
+
                     if include_playlists and search_type != 'music':
                         try:
                             playlist_search_url = f'ytsearch{max_results}:{query} playlist'
@@ -266,8 +225,7 @@ class YouTubeService:
                                                 playlists.append(pl)
                         except Exception:
                             pass
-                
-                # Não deixa o attachment de URLs falhar a busca
+
                 if mode == 'download' and videos:
                     try:
                         videos = self._attach_download_urls(videos)
@@ -278,16 +236,14 @@ class YouTubeService:
                         videos = self._attach_stream_urls(videos)
                     except Exception:
                         pass
-                
+
                 return videos, playlists, search_type
-                
             except Exception as e:
-                raise Exception(f"Erro ao buscar vídeos: {str(e)}")
-        
+                raise Exception(f"Erro ao buscar videos: {str(e)}")
+
         return await loop.run_in_executor(None, _search)
-    
+
     def _attach_stream_urls(self, videos: List[VideoMetadata]) -> List[VideoMetadata]:
-        """Anexa URL de stream de áudio para ouvir online (modo listen)."""
         for video in videos:
             if video.video_id:
                 try:
@@ -297,18 +253,11 @@ class YouTubeService:
                 except Exception:
                     pass
         return videos
-    
+
     def _try_get_stream_ytdlp(self, video_id: str) -> Optional[str]:
-        """Tenta obter stream URL via yt-dlp."""
         try:
             url = f"https://www.youtube.com/watch?v={video_id}"
-            opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'download': False,
-                'format': 'bestaudio/best',
-                'extract_flat': False,
-            }
+            opts = self._get_anti_block_ydl_opts()
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if info:
@@ -320,9 +269,8 @@ class YouTubeService:
         except Exception:
             pass
         return None
-    
+
     def _attach_download_urls(self, videos: List[VideoMetadata]) -> List[VideoMetadata]:
-        """Anexa URL de download direto do áudio original (modo download)."""
         for video in videos:
             if video.video_id:
                 try:
@@ -332,17 +280,11 @@ class YouTubeService:
                 except Exception:
                     pass
         return videos
-    
+
     def _try_get_download_ytdlp(self, video_id: str) -> Optional[str]:
-        """Tenta obter download URL via yt-dlp."""
         try:
             url = f"https://www.youtube.com/watch?v={video_id}"
-            opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'download': False,
-                'format': 'bestaudio/best',
-            }
+            opts = self._get_anti_block_ydl_opts()
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if info:
@@ -355,9 +297,8 @@ class YouTubeService:
         except Exception:
             pass
         return None
-    
+
     def _parse_video_info(self, entries: List[dict]) -> List[VideoMetadata]:
-        """Converte informações brutas do yt-dlp para VideoMetadata."""
         videos = []
         for entry in entries:
             if not entry:
@@ -366,7 +307,7 @@ class YouTubeService:
                 continue
             video = VideoMetadata(
                 video_id=entry.get('id', ''),
-                title=entry.get('title', 'Sem título'),
+                title=entry.get('title', 'Sem titulo'),
                 thumbnail=entry.get('thumbnail', ''),
                 duration=entry.get('duration', 0),
                 url=f"https://www.youtube.com/watch?v={entry.get('id', '')}",
@@ -378,19 +319,18 @@ class YouTubeService:
             )
             videos.append(video)
         return videos
-    
+
     async def get_playlist_items(self, playlist_id: str, max_results: int = 50) -> Tuple[str, str, Optional[str], int, List[VideoMetadata]]:
-        """Extrai todos os vídeos de uma playlist."""
         loop = asyncio.get_event_loop()
         playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
-        
+
         def _extract():
             try:
                 opts = self._get_ydl_options_playlist(max_results)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(playlist_url, download=False)
                     if not info:
-                        raise Exception("Playlist não encontrada")
+                        raise Exception("Playlist nao encontrada")
                     playlist_title = info.get('title', 'Playlist')
                     channel = info.get('channel', info.get('uploader'))
                     entries = info.get('entries', [])
@@ -401,31 +341,17 @@ class YouTubeService:
                     return playlist_title, playlist_url, channel, total, videos
             except Exception as e:
                 raise Exception(f"Erro ao extrair playlist: {str(e)}")
-        
+
         return await loop.run_in_executor(None, _extract)
-    
+
     async def get_audio_stream_url(self, video_id: str) -> dict:
-        """
-        Extrai a URL de stream de áudio do YouTube.
-        Usa múltiplas estratégias em ordem de confiabilidade:
-        1. yt-dlp (principal)
-        2. YouTube Android API (vários clientes)
-        3. Piped API (fallback)
-        """
         import requests as sync_requests
         loop = asyncio.get_event_loop()
-        
+
         def _fetch_via_ytdlp() -> Optional[dict]:
-            """Estratégia 1: yt-dlp."""
             try:
                 url = f"https://www.youtube.com/watch?v={video_id}"
-                opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'extract_flat': False,
-                    'format': 'bestaudio/best',
-                }
+                opts = self._get_anti_block_ydl_opts()
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if info:
@@ -445,33 +371,25 @@ class YouTubeService:
             except Exception as e:
                 print(f"[ytdlp] Erro: {str(e)[:100]}")
             return None
-        
+
         def _fetch_via_api() -> Optional[dict]:
-            """Estratégia 2: YouTube API com múltiplos clientes."""
             try:
-                api_keys = [
-                    "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-                ]
+                api_keys = ["AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"]
                 client_configs = [
                     {"clientName": "ANDROID", "clientVersion": "19.09.37", "androidSdkVersion": 34},
                     {"clientName": "ANDROID_EMBEDDED_PLAYER", "clientVersion": "19.09.37", "androidSdkVersion": 34},
                     {"clientName": "WEB", "clientVersion": "2.20240701.00.00"},
                     {"clientName": "IOS", "clientVersion": "19.29.1", "deviceModel": "iPhone16,2"},
                 ]
-                
                 headers = {
-                    'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36',
                     'Content-Type': 'application/json',
                 }
-                
                 for api_key in api_keys:
                     for client in client_configs:
                         try:
                             api_url = f"https://www.youtube.com/youtubei/v1/player?key={api_key}"
-                            payload = {
-                                "context": {"client": client},
-                                "videoId": video_id,
-                            }
+                            payload = {"context": {"client": client}, "videoId": video_id}
                             resp = sync_requests.post(api_url, json=payload, headers=headers, timeout=10)
                             if resp.status_code == 200:
                                 data = resp.json()
@@ -479,10 +397,8 @@ class YouTubeService:
                                 title = video_details.get('title', '')
                                 duration = int(video_details.get('lengthSeconds', 0))
                                 thumbnail = f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'
-                                
                                 streaming_data = data.get('streamingData', {})
                                 audio_urls = []
-                                
                                 for fmt in streaming_data.get('adaptiveFormats', []):
                                     mime = fmt.get('mimeType', '')
                                     if mime.startswith('audio/'):
@@ -494,7 +410,6 @@ class YouTubeService:
                                                 'mime': mime,
                                                 'ext': mime.split('/')[-1].split(';')[0],
                                             })
-                                
                                 if not audio_urls:
                                     for fmt in streaming_data.get('adaptiveFormats', []):
                                         mime = fmt.get('mimeType', '')
@@ -511,7 +426,6 @@ class YouTubeService:
                                                         'mime': mime,
                                                         'ext': mime.split('/')[-1].split(';')[0],
                                                     })
-                                
                                 if audio_urls:
                                     best = max(audio_urls, key=lambda x: x.get('abr', 0) or 0)
                                     return {
@@ -527,19 +441,14 @@ class YouTubeService:
             except Exception:
                 pass
             return None
-        
+
         def _fetch_via_piped() -> Optional[dict]:
-            """Estratégia 3: Piped API."""
-            piped_instances = [
-                "https://pipedapi.kavin.rocks",
-                "https://pipedapi.r4fo.com",
-            ]
+            piped_instances = ["https://pipedapi.kavin.rocks", "https://pipedapi.r4fo.com"]
             for instance in piped_instances:
                 try:
                     api_url = f"{instance}/streams/{video_id}"
                     resp = sync_requests.get(api_url, timeout=10, headers={
-                        'User-Agent': 'Mozilla/5.0',
-                        'Accept': 'application/json',
+                        'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json',
                     })
                     if resp.status_code == 200:
                         data = resp.json()
@@ -558,29 +467,21 @@ class YouTubeService:
                 except Exception:
                     continue
             return None
-        
+
         def _get_stream_url():
             errors = []
-            
-            # 1. yt-dlp (principal)
             result = _fetch_via_ytdlp()
             if result and result.get('stream_url'):
                 return result
             errors.append("ytdlp: sem stream URL")
-            
-            # 2. YouTube API
             result = _fetch_via_api()
             if result and result.get('stream_url'):
                 return result
             errors.append("api: sem stream URL")
-            
-            # 3. Piped
             result = _fetch_via_piped()
             if result and result.get('stream_url'):
                 return result
             errors.append("piped: sem stream URL")
-            
-            # Retorna informações parciais mesmo sem stream URL, para não quebrar a API
             return {
                 'stream_url': None,
                 'duration': 0,
@@ -590,25 +491,16 @@ class YouTubeService:
                 'ext': '',
                 'error': ' | '.join(errors),
             }
-        
+
         return await loop.run_in_executor(None, _get_stream_url)
-    
+
     async def get_direct_download_url(self, video_id: str) -> dict:
-        """
-        Extrai a URL de download direto do áudio original (melhor qualidade).
-        """
         loop = asyncio.get_event_loop()
-        
+
         def _fetch_via_ytdlp() -> Optional[dict]:
-            """Estratégia principal: yt-dlp."""
             try:
                 url = f"https://www.youtube.com/watch?v={video_id}"
-                opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'download': False,
-                    'format': 'bestaudio/best',
-                }
+                opts = self._get_anti_block_ydl_opts()
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if info:
@@ -630,12 +522,11 @@ class YouTubeService:
             except Exception:
                 pass
             return None
-        
+
         def _fetch() -> dict:
             result = _fetch_via_ytdlp()
             if result:
                 return result
-            # Retorna info parcial mesmo sem URL
             return {
                 'download_url': None,
                 'ext': 'unknown',
@@ -643,11 +534,10 @@ class YouTubeService:
                 'duration': 0,
                 'thumbnail': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg',
             }
-        
+
         return await loop.run_in_executor(None, _fetch)
-    
+
     def processar_midia(self, caminho_entrada: str, caminho_saida: str, **kwargs) -> bool:
-        """Processa mídia usando FFmpeg via subprocess."""
         try:
             print(f"[FFmpeg] Processando: {caminho_entrada} -> {caminho_saida}")
             cmd = ['ffmpeg', '-i', caminho_entrada]
@@ -667,56 +557,34 @@ class YouTubeService:
                 else:
                     cmd.extend([f'-{key}', str(value)])
             cmd.extend(['-y', caminho_saida])
-            print(f"[FFmpeg] Comando: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             if result.returncode != 0:
-                print(f"[FFmpeg] Erro: {result.stderr}")
                 return False
             if os.path.exists(caminho_saida):
-                print(f"[FFmpeg] Sucesso: {caminho_saida}")
                 if os.path.exists(caminho_entrada):
                     os.remove(caminho_entrada)
                 return True
-            else:
-                print(f"[FFmpeg] Erro: Arquivo de saída não foi criado")
-                return False
-        except subprocess.TimeoutExpired:
-            print(f"[FFmpeg] Timeout")
-            return False
-        except FileNotFoundError:
-            print(f"[FFmpeg] FFmpeg não encontrado")
             return False
         except Exception as e:
             print(f"[FFmpeg] Erro: {str(e)}")
             return False
-    
+
     async def download_audio(self, video_id: str, output_format: str = 'original') -> tuple:
-        """Baixa áudio do YouTube e opcionalmente converte usando FFmpeg."""
         loop = asyncio.get_event_loop()
         url = f"https://www.youtube.com/watch?v={video_id}"
-        
+
         def _download():
             try:
-                if output_format == 'original':
-                    ydl_opts = {
-                        'format': 'bestaudio/best',
-                        'quiet': True,
-                        'no_warnings': True,
-                        'outtmpl': str(self.download_dir / f'{video_id}.%(ext)s'),
-                    }
-                else:
-                    ydl_opts = {
-                        'format': 'bestaudio',
-                        'quiet': True,
-                        'no_warnings': True,
-                        'outtmpl': str(self.download_dir / f'{video_id}.%(ext)s'),
-                    }
-                
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'outtmpl': str(self.download_dir / f'{video_id}.%(ext)s'),
+                }
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     if not info:
-                        raise Exception("Não foi possível baixar o vídeo")
-                    
+                        raise Exception("Nao foi possivel baixar o video")
                     downloaded_file = None
                     downloaded_ext = None
                     for ext in ['m4a', 'webm', 'mp4', 'opus', 'ogg']:
@@ -725,15 +593,12 @@ class YouTubeService:
                             downloaded_file = str(test_file)
                             downloaded_ext = ext
                             break
-                    
                     if not downloaded_file:
-                        raise Exception("Arquivo baixado não encontrado")
-                    
+                        raise Exception("Arquivo baixado nao encontrado")
                     if output_format == 'original':
                         file_size = os.path.getsize(downloaded_file)
                         duration = info.get('duration', 0)
                         return downloaded_file, file_size, duration, downloaded_ext
-                    
                     output_file = str(self.download_dir / f"{video_id}.{output_format}")
                     ffmpeg_args = {
                         'acodec': 'libmp3lame' if output_format == 'mp3' else 'aac',
@@ -742,37 +607,29 @@ class YouTubeService:
                     }
                     success = self.processar_midia(downloaded_file, output_file, **ffmpeg_args)
                     if not success:
-                        raise Exception("Falha na conversão FFmpeg")
+                        raise Exception("Falha na conversao FFmpeg")
                     file_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
                     duration = info.get('duration', 0)
                     return output_file, file_size, duration, output_format
-                    
             except Exception as e:
-                raise Exception(f"Erro ao baixar/converter áudio: {str(e)}")
-        
+                raise Exception(f"Erro ao baixar/converter audio: {str(e)}")
+
         return await loop.run_in_executor(None, _download)
-    
+
     async def download_batch(self, video_ids: List[str], output_format: str = 'original') -> List[dict]:
-        """Baixa múltiplos vídeos em lote (para playlists)."""
         results = []
         for video_id in video_ids:
             try:
                 filepath, file_size, duration, ext = await self.download_audio(
-                    video_id=video_id,
-                    output_format=output_format
+                    video_id=video_id, output_format=output_format
                 )
                 results.append({
-                    'video_id': video_id,
-                    'success': True,
-                    'filepath': filepath,
-                    'file_size': file_size,
-                    'duration': duration,
-                    'ext': ext,
+                    'video_id': video_id, 'success': True,
+                    'filepath': filepath, 'file_size': file_size,
+                    'duration': duration, 'ext': ext,
                 })
             except Exception as e:
                 results.append({
-                    'video_id': video_id,
-                    'success': False,
-                    'error': str(e),
+                    'video_id': video_id, 'success': False, 'error': str(e),
                 })
         return results
