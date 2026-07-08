@@ -123,3 +123,15 @@ class ErrorResponse(BaseModel):
     success: bool = Field(False, description="Sempre False para erros")
     error: str = Field(..., description="Mensagem de erro")
     detail: Optional[str] = Field(None, description="Detalhes adicionais do erro")
+
+
+class PalcoMP3SearchRequest(BaseModel):
+    """Request para busca no Palco MP3."""
+    query: str = Field(..., description="Termo de busca")
+    max_results: Optional[int] = Field(10, description="Número máximo de resultados", ge=1, le=50)
+
+
+class PalcoMP3DownloadRequest(BaseModel):
+    """Request para download do Palco MP3."""
+    url: str = Field(..., description="URL do Palco MP3")
+    format: Optional[str] = Field("mp3", description="Formato de saída: 'mp3', 'm4a', 'original'")

@@ -22,6 +22,8 @@ from schemas import (
     PlaylistResponse,
     PlaylistDownloadRequest,
     BatchDownloadResponse,
+    PalcoMP3SearchRequest,
+    PalcoMP3DownloadRequest,
     ErrorResponse,
     VideoMetadata,
     PlaylistMetadata
@@ -365,6 +367,82 @@ async def get_file(filename: str):
         media_type=media_type,
         filename=filename
     )
+
+
+@app.post(
+    "/palcomp3/search",
+    response_model=SearchResponse,
+    tags=["Palco MP3"]
+)
+async def search_palcomp3(request: PalcoMP3SearchRequest):
+    """
+    Busca músicas no Palco MP3.
+    
+    Args:
+        request: Objeto com termo de busca e número máximo de resultados
+        
+    Returns:
+        SearchResponse com lista de músicas encontradas
+    """
+    try:
+        results = await youtube_service.search_palcomp3(
+            query=request.query,
+            max_results=request.max_results
+        )
+        
+        return SearchResponse(
+            success=True,
+            results=results,
+            playlists=[],
+            total=len(results),
+            search_type="palcomp3"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao buscar no Palco MP3: {str(e)}"
+        )
+
+
+@app.post(
+    "/palcomp3/download",
+    response_model=DownloadResponse,
+    tags=["Palco MP3"]
+)
+async def download_palcomp3(request: PalcoMP3DownloadRequest):
+    """
+    Baixa áudio do Palco MP3.
+    
+    Args:
+        request: Objeto com URL do Palco MP3 e formato de saída
+        
+    Returns:
+        DownloadResponse com informações do arquivo baixado
+    """
+    try:
+        filepath, file_size, duration, ext = await youtube_service.download_palcomp3(
+            url=request.url,
+            output_format=request.format
+        )
+        
+        filename = os.path.basename(filepath)
+        download_url = f"/files/{filename}"
+        
+        return DownloadResponse(
+            success=True,
+            message=f"Áudio baixado do Palco MP3{' e convertido para ' + request.format if request.format != 'original' else ' no formato original'}",
+            download_url=download_url,
+            file_size=file_size,
+            duration=duration,
+            format=request.format if request.format != 'original' else ext,
+            ext=ext,
+            filename=filename
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao baixar do Palco MP3: {str(e)}"
+        )
 
 
 @app.exception_handler(HTTPException)

@@ -82,6 +82,124 @@ class YouTubeService:
             opts['playlistend'] = max_results * 3
         return opts
 
+    async def search_palcomp3(self, query: str, max_results: int = 10) -> List[VideoMetadata]:
+        """
+        Busca músicas no Palco MP3 usando yt-dlp.
+        
+        Args:
+            query: Termo de busca
+            max_results: Número máximo de resultados
+            
+        Returns:
+            Lista de metadados de músicas do Palco MP3
+        """
+        loop = asyncio.get_event_loop()
+        
+        def _search():
+            try:
+                # Usa yt-dlp para buscar no Palco MP3
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': True,
+                    'playlistend': max_results,
+                    'noplaylist': False,
+                }
+                
+                # Busca usando o extractor do Palco MP3
+                search_url = f'palcomp3search{max_results}:{query}'
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(search_url, download=False)
+                    
+                    if info and 'entries' in info:
+                        return self._parse_video_info(info['entries'][:max_results])
+                return []
+            except Exception as e:
+                print(f"[Palco MP3] Erro na busca: {str(e)}")
+                return []
+        
+        return await loop.run_in_executor(None, _search)
+    
+    async def download_palcomp3(self, url: str, output_format: str = 'mp3') -> tuple[str, int, int, str]:
+        """
+        Baixa áudio do Palco MP3 usando yt-dlp.
+        
+        Args:
+            url: URL do Palco MP3
+            output_format: Formato de saída (mp3, m4a, original)
+            
+        Returns:
+            Tupla com (caminho do arquivo, tamanho em bytes, duração, extensão)
+        """
+        loop = asyncio.get_event_loop()
+        
+        def _download():
+            try:
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'outtmpl': str(self.download_dir / '%(id)s.%(ext)s'),
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if not info:
+                        raise Exception("Não foi possível baixar do Palco MP3")
+                    
+                    # Encontra o arquivo baixado
+                    downloaded_file = None
+                    for ext in ['mp3', 'm4a', 'webm', 'opus']:
+                        test_file = self.download_dir / f"{info.get('id', 'audio')}.{ext}"
+                        if test_file.exists():
+                            downloaded_file = str(test_file)
+                            break
+                    
+                    if not downloaded_file:
+                        raise Exception("Arquivo baixado não encontrado")
+                    
+                    # Se formato for original, retorna o arquivo como está
+                    if output_format == 'original':
+                        file_size = os.path.getsize(downloaded_file)
+                        duration = info.get('duration', 0)
+                        ext = downloaded_file.split('.')[-1]
+                        return downloaded_file, file_size, duration, ext
+                    
+                    # Converte se necessário
+                    output_file = str(self.download_dir / f"{info.get('id', 'audio')}.{output_format}")
+                    
+                    # Usa FFmpeg para conversão
+                    import ffmpeg
+                    try:
+                        (
+                            ffmpeg
+                            .input(downloaded_file)
+                            .output(output_file, acodec='libmp3lame' if output_format == 'mp3' else 'aac', ab='192k')
+                            .overwrite_output()
+                            .run(capture_stdout=True, capture_stderr=True)
+                        )
+                        
+                        # Deleta arquivo original
+                        os.remove(downloaded_file)
+                        
+                        file_size = os.path.getsize(output_file)
+                        duration = info.get('duration', 0)
+                        return output_file, file_size, duration, output_format
+                    except Exception as e:
+                        print(f"[FFmpeg] Erro na conversão: {str(e)}")
+                        # Retorna arquivo original se conversão falhar
+                        file_size = os.path.getsize(downloaded_file)
+                        duration = info.get('duration', 0)
+                        ext = downloaded_file.split('.')[-1]
+                        return downloaded_file, file_size, duration, ext
+                        
+            except Exception as e:
+                raise Exception(f"Erro ao baixar do Palco MP3: {str(e)}")
+        
+        return await loop.run_in_executor(None, _download)
+    
     async def search_videos(self, query: str, max_results: int = 10,
                            mode: str = 'listen', include_playlists: bool = True,
                            type_filter: str = 'auto') -> Tuple[List[VideoMetadata], List[PlaylistMetadata], str]:
