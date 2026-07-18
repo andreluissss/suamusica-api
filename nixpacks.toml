@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python312", "python312.pkgs.pip", "python312.pkgs.setuptools"]
+
+[phases.install]
+cmds = ["pip install --no-cache-dir -r requirements_api.txt"]
+
+[start]
+cmd = "uvicorn suamusica_api:app --host 0.0.0.0 --port $PORT"
