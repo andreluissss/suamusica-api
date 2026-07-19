@@ -180,60 +180,73 @@ def search(q: str = Query(..., description="Termo de busca")):
     # Se a busca não retornar dados suficientes, tenta acessar diretamente o username
     if not pp or (not pp.get("profiles") and not pp.get("albums") and not pp.get("recommendedAlbums")):
         logger.warning(f"Busca por '{q}' não retornou resultados, tentando acesso direto")
-        # Tenta acessar diretamente como username
-        direct_url = f"{BASE_URL}/{q.lower().replace(' ', '')}"
-        direct_pp = _page_props(direct_url)
         
-        if direct_pp and direct_pp.get("user"):
-            user = direct_pp.get("user")
-            albums = direct_pp.get("userAlbums") or []
-            return {
-                "query": q,
-                "direct_access": True,
-                "profiles": [
-                    {
-                        "id": user.get("id"),
-                        "name": user.get("name"),
-                        "username": user.get("username"),
-                        "avatar": user.get("avatar"),
-                        "cover": user.get("cover"),
-                        "plays": user.get("plays"),
-                        "downloads": user.get("download"),
-                        "uploads": user.get("uploads"),
-                        "city": user.get("city"),
-                        "state": user.get("state"),
-                        "followers": user.get("followers"),
-                        "is_vip": user.get("isVip"),
-                        "is_verified": user.get("isVerified"),
-                        "albums_count": len(albums),
-                    }
-                ],
-                "albums": [
-                    {
-                        "id": a.get("id"),
-                        "title": a.get("title"),
-                        "artist": user.get("name"),
-                        "artist_username": user.get("username"),
-                        "slug": a.get("slug"),
-                        "cover": a.get("cover"),
-                        "big_cover": a.get("bigCover"),
-                        "plays": a.get("plays"),
-                        "downloads": a.get("downloads"),
-                        "tracks_count": a.get("total", 0),
-                        "is_vip": a.get("isVip"),
-                        "is_verified": user.get("isVerified"),
-                        "released": bool(a.get("released")),
-                        "date": a.get("sendDate"),
-                        "tracks_url": f"/album/{user.get('username')}/{a.get('slug')}" if a.get('slug') else None,
-                    }
-                    for a in albums
-                ],
-                "all_albums": [],
-                "news": [],
-                "videos": [],
-            }
-        else:
-            raise HTTPException(404, f"Nenhum resultado encontrado para '{q}'")
+        # Tenta variações comuns de username
+        base_username = q.lower().replace(' ', '')
+        variations = [
+            base_username,
+            f"{base_username}ofc",
+            f"{base_username}oficial",
+            f"{base_username}music",
+            f"{base_username}banda",
+            f"{base_username}oficialbr",
+        ]
+        
+        for username in variations:
+            direct_url = f"{BASE_URL}/{username}"
+            direct_pp = _page_props(direct_url)
+            
+            if direct_pp and direct_pp.get("user"):
+                user = direct_pp.get("user")
+                albums = direct_pp.get("userAlbums") or []
+                return {
+                    "query": q,
+                    "direct_access": True,
+                    "username_used": username,
+                    "profiles": [
+                        {
+                            "id": user.get("id"),
+                            "name": user.get("name"),
+                            "username": user.get("username"),
+                            "avatar": user.get("avatar"),
+                            "cover": user.get("cover"),
+                            "plays": user.get("plays"),
+                            "downloads": user.get("download"),
+                            "uploads": user.get("uploads"),
+                            "city": user.get("city"),
+                            "state": user.get("state"),
+                            "followers": user.get("followers"),
+                            "is_vip": user.get("isVip"),
+                            "is_verified": user.get("isVerified"),
+                            "albums_count": len(albums),
+                        }
+                    ],
+                    "albums": [
+                        {
+                            "id": a.get("id"),
+                            "title": a.get("title"),
+                            "artist": user.get("name"),
+                            "artist_username": user.get("username"),
+                            "slug": a.get("slug"),
+                            "cover": a.get("cover"),
+                            "big_cover": a.get("bigCover"),
+                            "plays": a.get("plays"),
+                            "downloads": a.get("downloads"),
+                            "tracks_count": a.get("total", 0),
+                            "is_vip": a.get("isVip"),
+                            "is_verified": user.get("isVerified"),
+                            "released": bool(a.get("released")),
+                            "date": a.get("sendDate"),
+                            "tracks_url": f"/album/{user.get('username')}/{a.get('slug')}" if a.get('slug') else None,
+                        }
+                        for a in albums
+                    ],
+                    "all_albums": [],
+                    "news": [],
+                    "videos": [],
+                }
+        
+        raise HTTPException(404, f"Nenhum resultado encontrado para '{q}'")
 
     # Extrai todos os campos disponíveis para mais resultados
     return {
