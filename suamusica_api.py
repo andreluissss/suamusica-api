@@ -172,12 +172,14 @@ def root():
 def search(q: str = Query(..., description="Termo de busca")):
     """
     Busca artistas, albuns, noticias e videos no SuaMusica.
+    Retorna resultados mais completos com links para ouvir/baixar.
     """
     url = f"{BASE_URL}/busca?q={q}"
     pp = _page_props(url)
     if not pp:
         raise HTTPException(500, "Nao foi possivel buscar os dados.")
 
+    # Extrai todos os campos disponíveis para mais resultados
     return {
         "query": q,
         "profiles": [
@@ -186,8 +188,12 @@ def search(q: str = Query(..., description="Termo de busca")):
                 "name": p.get("name"),
                 "username": p.get("username"),
                 "avatar": p.get("avatar"),
+                "cover": p.get("cover"),
+                "plays": p.get("plays"),
+                "downloads": p.get("downloads"),
                 "is_vip": p.get("isVip"),
                 "is_verified": p.get("isVerified"),
+                "albums_count": p.get("totalAlbums", 0),
             }
             for p in (pp.get("profiles") or [])
         ],
@@ -197,12 +203,36 @@ def search(q: str = Query(..., description="Termo de busca")):
                 "title": a.get("title"),
                 "artist": a.get("name"),
                 "artist_username": a.get("username"),
+                "slug": a.get("slug"),
+                "cover": a.get("cover"),
+                "big_cover": a.get("bigCover"),
+                "plays": a.get("plays"),
+                "downloads": a.get("downloads"),
+                "tracks_count": a.get("total", 0),
+                "is_vip": a.get("isVip"),
+                "is_verified": a.get("isVerified"),
+                "released": bool(a.get("released")),
+                "date": a.get("sendDate"),
+                # Link para obter tracks com MP3
+                "tracks_url": f"/album/{a.get('username')}/{a.get('slug')}" if a.get('username') and a.get('slug') else None,
+            }
+            for a in (pp.get("recommendedAlbums") or [])
+        ],
+        # Adiciona mais campos de busca se disponíveis
+        "all_albums": [
+            {
+                "id": a.get("id"),
+                "title": a.get("title"),
+                "artist": a.get("name"),
+                "artist_username": a.get("username"),
+                "slug": a.get("slug"),
                 "cover": a.get("cover"),
                 "plays": a.get("plays"),
                 "downloads": a.get("downloads"),
-                "is_verified": a.get("isVerified"),
+                "tracks_count": a.get("total", 0),
+                "tracks_url": f"/album/{a.get('username')}/{a.get('slug')}" if a.get('username') and a.get('slug') else None,
             }
-            for a in (pp.get("recommendedAlbums") or [])
+            for a in (pp.get("albums") or [])
         ],
         "news": pp.get("news") or [],
         "videos": (pp.get("videos") or {}).get("items") or [],
