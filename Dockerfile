@@ -8,6 +8,10 @@ RUN pip install --no-cache-dir -r requirements_api.txt
 
 # Copy app
 COPY suamusica_api.py .
+COPY base_scraper.py .
+COPY scraper_artists.py .
+COPY scraper_playlists.py .
+COPY scraper_podcasts.py .
 
 # Healthcheck
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
