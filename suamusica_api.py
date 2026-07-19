@@ -56,13 +56,22 @@ app.add_middleware(
 def _fetch_next_data(url: str) -> Optional[dict]:
     """Faz GET e retorna o JSON do __NEXT_DATA__."""
     try:
-        resp = SESSION.get(url, timeout=30)
+        resp = SESSION.get(url, timeout=15)  # Reduzido de 30 para 15 segundos
+        if resp.status_code == 404:
+            logger.warning(f"404 Not Found: {url}")
+            return None
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         script = soup.find("script", id="__NEXT_DATA__")
         if script:
             return json.loads(script.get_text())
         logger.warning(f"__NEXT_DATA__ not found in {url}")
+        return None
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout ao acessar {url} (15s)")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erro de requisição ao acessar {url}: {e}")
         return None
     except Exception as e:
         logger.error(f"Error fetching {url}: {e}")
@@ -210,7 +219,7 @@ def artist(username: str):
     pp = _page_props(url)
 
     if not pp:
-        raise HTTPException(404, f"Artista '{username}' nao encontrado.")
+        raise HTTPException(404, f"Artista '{username}' nao encontrado ou timeout.")
 
     user = pp.get("user")
     if not user:
@@ -248,7 +257,7 @@ def album(username: str, slug: Optional[str] = Query(None)):
 
     if not pp:
         raise HTTPException(
-            404, f"Album '{slug_val}' do artista '{user}' nao encontrado."
+            404, f"Album '{slug_val}' do artista '{user}' nao encontrado ou timeout."
         )
 
     album_data = pp.get("album")
