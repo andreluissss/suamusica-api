@@ -172,16 +172,73 @@ def root():
 def search(q: str = Query(..., description="Termo de busca")):
     """
     Busca artistas, albuns, noticias e videos no SuaMusica.
-    Retorna resultados mais completos com links para ouvir/baixar.
+    Se a busca não retornar resultados, tenta acessar diretamente a página do artista.
     """
     url = f"{BASE_URL}/busca?q={q}"
     pp = _page_props(url)
-    if not pp:
-        raise HTTPException(500, "Nao foi possivel buscar os dados.")
+    
+    # Se a busca não retornar dados suficientes, tenta acessar diretamente o username
+    if not pp or (not pp.get("profiles") and not pp.get("albums") and not pp.get("recommendedAlbums")):
+        logger.warning(f"Busca por '{q}' não retornou resultados, tentando acesso direto")
+        # Tenta acessar diretamente como username
+        direct_url = f"{BASE_URL}/{q.lower().replace(' ', '')}"
+        direct_pp = _page_props(direct_url)
+        
+        if direct_pp and direct_pp.get("user"):
+            user = direct_pp.get("user")
+            albums = direct_pp.get("userAlbums") or []
+            return {
+                "query": q,
+                "direct_access": True,
+                "profiles": [
+                    {
+                        "id": user.get("id"),
+                        "name": user.get("name"),
+                        "username": user.get("username"),
+                        "avatar": user.get("avatar"),
+                        "cover": user.get("cover"),
+                        "plays": user.get("plays"),
+                        "downloads": user.get("download"),
+                        "uploads": user.get("uploads"),
+                        "city": user.get("city"),
+                        "state": user.get("state"),
+                        "followers": user.get("followers"),
+                        "is_vip": user.get("isVip"),
+                        "is_verified": user.get("isVerified"),
+                        "albums_count": len(albums),
+                    }
+                ],
+                "albums": [
+                    {
+                        "id": a.get("id"),
+                        "title": a.get("title"),
+                        "artist": user.get("name"),
+                        "artist_username": user.get("username"),
+                        "slug": a.get("slug"),
+                        "cover": a.get("cover"),
+                        "big_cover": a.get("bigCover"),
+                        "plays": a.get("plays"),
+                        "downloads": a.get("downloads"),
+                        "tracks_count": a.get("total", 0),
+                        "is_vip": a.get("isVip"),
+                        "is_verified": user.get("isVerified"),
+                        "released": bool(a.get("released")),
+                        "date": a.get("sendDate"),
+                        "tracks_url": f"/album/{user.get('username')}/{a.get('slug')}" if a.get('slug') else None,
+                    }
+                    for a in albums
+                ],
+                "all_albums": [],
+                "news": [],
+                "videos": [],
+            }
+        else:
+            raise HTTPException(404, f"Nenhum resultado encontrado para '{q}'")
 
     # Extrai todos os campos disponíveis para mais resultados
     return {
         "query": q,
+        "direct_access": False,
         "profiles": [
             {
                 "id": p.get("id"),
