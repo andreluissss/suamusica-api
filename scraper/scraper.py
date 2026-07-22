@@ -31,47 +31,106 @@ class YouTubeScraper:
         # 1. YOUTUBE_COOKIES_FROM_BROWSER (recomendado) - extrai cookies de um navegador
         #    Valores: chrome, firefox, edge, brave, opera, chromium, safari, vivaldi
         # 2. YOUTUBE_COOKIES_FILE - caminho para um arquivo de cookies.txt
-        # 3. Android client como último recurso (pode ser bloqueado)
+        # 3. Detecção automática de cookies de navegadores instalados
+        # 4. Múltiplas estratégias de cliente (android, ios, web) com retry
         cookies_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER", "")
         cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
 
+        # Headers realistas para evitar detecção
+        self._http_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+
+        # Configuração base (sem extractor_args - será definido por estratégia)
         self._common_opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
+            "http_headers": dict(self._http_headers),
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "ios"],
                     "include_dash_manifest": False,
                 }
             },
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            },
         }
 
-        auth_source = "android/ios client"
+        auth_source = None
 
         # Priority 1: cookies from browser env var (recommended)
         if cookies_browser:
             browser_name = cookies_browser.strip().lower()
-            # Remove Android client when using browser cookies - cookies are more reliable
-            if "player_client" in self._common_opts.get("extractor_args", {}).get("youtube", {}):
-                del self._common_opts["extractor_args"]["youtube"]["player_client"]
             self._common_opts["cookiesfrombrowser"] = browser_name
             auth_source = f"browser ({browser_name})"
             logger.info(f"Usando cookies do navegador: {browser_name}")
 
         # Priority 2: cookies file env var
         elif cookies_file and os.path.exists(cookies_file):
-            # Remove Android client when using cookies file
-            if "player_client" in self._common_opts.get("extractor_args", {}).get("youtube", {}):
-                del self._common_opts["extractor_args"]["youtube"]["player_client"]
             self._common_opts["cookiefile"] = cookies_file
             auth_source = f"cookies file ({cookies_file})"
             logger.info(f"Usando arquivo de cookies: {cookies_file}")
+
+        # Priority 3: auto-detect browser cookies
+        else:
+            detected = self._detect_browser_cookies()
+            if detected:
+                auth_source = f"browser auto-detect ({detected})"
+                logger.info(f"Cookies detectados automaticamente do navegador: {detected}")
+
+        if not auth_source:
+            auth_source = "dynamic client strategy"
+            logger.info(
+                "Nenhum cookie encontrado. Usando estratégia dinâmica de clientes. "
+                "Se falhar, configure YOUTUBE_COOKIES_FROM_BROWSER=chrome"
+            )
+
+        logger.info(f"Método de autenticação: {auth_source}")
+
+        # Lista de estratégias de cliente para tentar em caso de bloqueio
+        self._client_strategies = [
+            # Estratégia 1: android + ios (padrão)
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "ios"],
+                        "include_dash_manifest": False,
+                    }
+                },
+            },
+            # Estratégia 2: web client (Safari) - menos detectado como bot
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["web_safari"],
+                        "include_dash_manifest": False,
+                    }
+                },
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                },
+            },
+            # Estratégia 3: android TV - diferente dos clientes comuns
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android_tv"],
+                        "include_dash_manifest": False,
+                    }
+                },
+            },
+            # Estratégia 4: web embbed (incorporado) - parece tráfego de site
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["web_embbed"],
+                        "include_dash_manifest": False,
+                    }
+                },
+            },
+        ]
 
         self.ydl_opts = {
             **self._common_opts,
@@ -85,6 +144,85 @@ class YouTubeScraper:
             ],
             "outtmpl": os.path.join(self.download_dir, "%(title)s.%(ext)s"),
         }
+
+    def _detect_browser_cookies(self) -> Optional[str]:
+        """
+        Tenta detectar cookies de navegadores instalados automaticamente.
+        Retorna o nome do navegador ou None.
+        """
+        browsers = ["chrome", "firefox", "edge", "brave", "opera", "chromium", "vivaldi", "safari"]
+        for browser in browsers:
+            try:
+                test_opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "cookiesfrombrowser": browser,
+                    "extract_flat": True,
+                }
+                with YoutubeDL(test_opts) as ydl:
+                    info = ydl.extract_info("ytsearch1:test", download=False)
+                    if info:
+                        self._common_opts["cookiesfrombrowser"] = browser
+                        return browser
+            except Exception:
+                continue
+        return None
+
+    def _extract_with_retry(self, url: str, download: bool = False, opts_override: Optional[Dict] = None) -> Dict:
+        """
+        Tenta extrair informações com múltiplas estratégias de cliente.
+        Se uma estratégia falhar com bloqueio, tenta a próxima.
+
+        Args:
+            url: URL do YouTube
+            download: Se deve baixar o áudio
+            opts_override: Opções extras para sobrescrever
+
+        Returns:
+            Informações extraídas
+        """
+        # Se já tem cookies configurados, tenta direto primeiro
+        if "cookiesfrombrowser" in self._common_opts or "cookiefile" in self._common_opts:
+            base_opts = dict(self._common_opts)
+            if opts_override:
+                base_opts.update(opts_override)
+            try:
+                with YoutubeDL(base_opts) as ydl:
+                    return ydl.extract_info(url, download=download)
+            except Exception as e:
+                error_msg = str(e)
+                if "Sign in" not in error_msg and "bot" not in error_msg.lower():
+                    raise  # Só tenta fallback se for bloqueio do YouTube
+                logger.warning(f"Cookies falharam, tentando estratégias alternativas: {error_msg[:100]}")
+
+        # Tenta cada estratégia de cliente
+        last_error = None
+        for i, strategy in enumerate(self._client_strategies):
+            strategy_opts = dict(self._common_opts)
+            # Remove cookies se existirem (já falharam)
+            strategy_opts.pop("cookiesfrombrowser", None)
+            strategy_opts.pop("cookiefile", None)
+            # Aplica estratégia
+            strategy_opts["extractor_args"] = strategy["extractor_args"]
+            if "http_headers" in strategy:
+                strategy_opts["http_headers"] = strategy["http_headers"]
+            if opts_override:
+                strategy_opts.update(opts_override)
+
+            try:
+                logger.info(f"Tentando estratégia {i + 1}: {strategy['extractor_args']['youtube']['player_client']}")
+                with YoutubeDL(strategy_opts) as ydl:
+                    return ydl.extract_info(url, download=download)
+            except Exception as e:
+                last_error = e
+                error_msg = str(e)
+                if "Sign in" not in error_msg and "bot" not in error_msg.lower():
+                    raise  # Erro diferente de bloqueio - não adianta tentar outra estratégia
+                logger.warning(f"Estratégia {i + 1} falhou: {error_msg[:100]}")
+                continue
+
+        # Se todas falharam, levanta o último erro
+        raise last_error or Exception("Todas as estratégias de extração falharam")
 
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
         """
@@ -213,35 +351,37 @@ class YouTubeScraper:
         Returns:
             Caminho do arquivo MP3
         """
-        opts = dict(self.ydl_opts)
+        opts_override = dict(self.ydl_opts)
+        # Remove _common_opts keys that would conflict since we pass them via _extract_with_retry
+        for key in ("quiet", "no_warnings", "extract_flat", "http_headers", "extractor_args", "cookiesfrombrowser", "cookiefile"):
+            opts_override.pop(key, None)
 
         if filename:
             safe_name = re.sub(r'[<>:"/\\|?*]', '_', filename)[:100]
             file_path = os.path.join(self.download_dir, f"{safe_name}.%(ext)s")
-            opts["outtmpl"] = file_path
+            opts_override["outtmpl"] = file_path
 
         try:
-            with YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-                title = info.get("title", "audio_downloaded")
+            info = self._extract_with_retry(video_url, download=True, opts_override=opts_override)
+            title = info.get("title", "audio_downloaded")
 
-                expected_file = os.path.join(
-                    self.download_dir,
-                    f"{filename or title}.mp3",
-                )
+            expected_file = os.path.join(
+                self.download_dir,
+                f"{filename or title}.mp3",
+            )
 
-                if os.path.exists(expected_file):
-                    return expected_file
-
-                mp3_files = sorted(
-                    Path(self.download_dir).glob("*.mp3"),
-                    key=os.path.getmtime,
-                    reverse=True,
-                )
-                if mp3_files:
-                    return str(mp3_files[0])
-
+            if os.path.exists(expected_file):
                 return expected_file
+
+            mp3_files = sorted(
+                Path(self.download_dir).glob("*.mp3"),
+                key=os.path.getmtime,
+                reverse=True,
+            )
+            if mp3_files:
+                return str(mp3_files[0])
+
+            return expected_file
 
         except Exception as e:
             raise Exception(f"Erro ao baixar áudio: {str(e)}")
@@ -254,29 +394,28 @@ class YouTubeScraper:
             Tupla (url_stream, titulo)
         """
         try:
-            opts = {
-                **self._common_opts,
-                "format": "bestaudio/best",
-            }
-            with YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                audio_url = info.get("url", "")
-                title = info.get("title", "Sem título")
+            info = self._extract_with_retry(
+                video_url,
+                download=False,
+                opts_override={"format": "bestaudio/best"},
+            )
+            audio_url = info.get("url", "")
+            title = info.get("title", "Sem título")
 
-                formats = info.get("formats", [])
-                audio_formats = [
-                    f for f in formats
-                    if f.get("vcodec") == "none" and f.get("acodec") != "none"
-                ]
+            formats = info.get("formats", [])
+            audio_formats = [
+                f for f in formats
+                if f.get("vcodec") == "none" and f.get("acodec") != "none"
+            ]
 
-                if audio_formats:
-                    best_audio = max(
-                        audio_formats,
-                        key=lambda f: f.get("abr", 0) or 0,
-                    )
-                    audio_url = best_audio.get("url", audio_url)
+            if audio_formats:
+                best_audio = max(
+                    audio_formats,
+                    key=lambda f: f.get("abr", 0) or 0,
+                )
+                audio_url = best_audio.get("url", audio_url)
 
-                return audio_url, title
+            return audio_url, title
 
         except Exception as e:
             raise Exception(f"Erro ao obter stream: {str(e)}")
@@ -284,33 +423,32 @@ class YouTubeScraper:
     def get_video_info(self, video_url: str) -> Dict:
         """Obtém informações detalhadas do vídeo."""
         try:
-            with YoutubeDL(self._common_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
+            info = self._extract_with_retry(video_url, download=False)
 
-                audio_formats = []
-                for f in info.get("formats", []):
-                    if f.get("vcodec") == "none" and f.get("acodec") != "none":
-                        audio_formats.append({
-                            "format_id": f.get("format_id"),
-                            "ext": f.get("ext"),
-                            "filesize": f.get("filesize"),
-                            "abr": f.get("abr"),
-                        })
+            audio_formats = []
+            for f in info.get("formats", []):
+                if f.get("vcodec") == "none" and f.get("acodec") != "none":
+                    audio_formats.append({
+                        "format_id": f.get("format_id"),
+                        "ext": f.get("ext"),
+                        "filesize": f.get("filesize"),
+                        "abr": f.get("abr"),
+                    })
 
-                return {
-                    "id": info.get("id", ""),
-                    "title": info.get("title", "Sem título"),
-                    "channel": info.get("channel", info.get("uploader", "Desconhecido")),
-                    "duration": self._format_duration(info.get("duration", 0)),
-                    "duration_seconds": info.get("duration", 0),
-                    "view_count": info.get("view_count", 0),
-                    "like_count": info.get("like_count", 0),
-                    "thumbnail": info.get("thumbnail", ""),
-                    "audio_formats": audio_formats,
-                    "description": (info.get("description") or "")[:300],
-                    "is_playlist": info.get("extractor", "").lower().find("playlist") >= 0,
-                    "url": video_url,
-                }
+            return {
+                "id": info.get("id", ""),
+                "title": info.get("title", "Sem título"),
+                "channel": info.get("channel", info.get("uploader", "Desconhecido")),
+                "duration": self._format_duration(info.get("duration", 0)),
+                "duration_seconds": info.get("duration", 0),
+                "view_count": info.get("view_count", 0),
+                "like_count": info.get("like_count", 0),
+                "thumbnail": info.get("thumbnail", ""),
+                "audio_formats": audio_formats,
+                "description": (info.get("description") or "")[:300],
+                "is_playlist": info.get("extractor", "").lower().find("playlist") >= 0,
+                "url": video_url,
+            }
         except Exception as e:
             raise Exception(f"Erro ao obter info: {str(e)}")
 
