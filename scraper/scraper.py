@@ -24,18 +24,29 @@ class YouTubeScraper:
         os.makedirs(self.download_dir, exist_ok=True)
 
         # Configurações para bypass do bloqueio do YouTube
+        # Tenta usar cookies de ambiente primeiro, depois fallback para Android client
+        cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
         self._common_opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
-            # Bypass YouTube bot detection
-            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            # Bypass YouTube bot detection com múltiplos clients
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios"],
+                    "include_dash_manifest": False,
+                }
+            },
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
             },
         }
+
+        if cookies_file and os.path.exists(cookies_file):
+            self._common_opts["cookiefile"] = cookies_file
+            self._common_opts["extractor_args"]["youtube"].pop("player_client", None)
 
         self.ydl_opts = {
             **self._common_opts,
