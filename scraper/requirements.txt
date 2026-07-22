@@ -1,0 +1,5 @@
+# Dependências do YouTube Music Scraper
+# Instalação: pip install -r requirements.txt
+yt-dlp>=2026.0.0
+flask>=3.0.0
+requests>=2.31.0

@@ -1,0 +1,1 @@
+# YouTube Scraper - Pacote de scraping, download e reprodução de música do YouTube
