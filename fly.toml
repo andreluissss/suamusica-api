@@ -1,0 +1,13 @@
+# fly.toml - Configuração do Fly.io para suamusica-api
+app = "suamusica-api"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
