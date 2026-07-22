@@ -6,10 +6,13 @@ Usa yt-dlp (não requer API key).
 
 import os
 import re
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 from yt_dlp import YoutubeDL
+
+logger = logging.getLogger(__name__)
 
 
 class YouTubeScraper:
@@ -24,13 +27,18 @@ class YouTubeScraper:
         os.makedirs(self.download_dir, exist_ok=True)
 
         # Configurações para bypass do bloqueio do YouTube
-        # Tenta usar cookies de ambiente primeiro, depois fallback para Android client
-        cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
+        # Ordem de precedência:
+        # 1. YOUTUBE_COOKIES_FROM_BROWSER (recomendado) - extrai cookies de um navegador
+        #    Valores: chrome, firefox, edge, brave, opera, chromium, safari, vivaldi
+        # 2. YOUTUBE_COOKIES_FILE - caminho para um arquivo de cookies.txt
+        # 3. Android client como último recurso (pode ser bloqueado)
+        cookies_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER", "")
+        cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
+
         self._common_opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
-            # Bypass YouTube bot detection com múltiplos clients
             "extractor_args": {
                 "youtube": {
                     "player_client": ["android", "ios"],
@@ -44,9 +52,26 @@ class YouTubeScraper:
             },
         }
 
-        if cookies_file and os.path.exists(cookies_file):
+        auth_source = "android/ios client"
+
+        # Priority 1: cookies from browser env var (recommended)
+        if cookies_browser:
+            browser_name = cookies_browser.strip().lower()
+            # Remove Android client when using browser cookies - cookies are more reliable
+            if "player_client" in self._common_opts.get("extractor_args", {}).get("youtube", {}):
+                del self._common_opts["extractor_args"]["youtube"]["player_client"]
+            self._common_opts["cookiesfrombrowser"] = browser_name
+            auth_source = f"browser ({browser_name})"
+            logger.info(f"Usando cookies do navegador: {browser_name}")
+
+        # Priority 2: cookies file env var
+        elif cookies_file and os.path.exists(cookies_file):
+            # Remove Android client when using cookies file
+            if "player_client" in self._common_opts.get("extractor_args", {}).get("youtube", {}):
+                del self._common_opts["extractor_args"]["youtube"]["player_client"]
             self._common_opts["cookiefile"] = cookies_file
-            self._common_opts["extractor_args"]["youtube"].pop("player_client", None)
+            auth_source = f"cookies file ({cookies_file})"
+            logger.info(f"Usando arquivo de cookies: {cookies_file}")
 
         self.ydl_opts = {
             **self._common_opts,

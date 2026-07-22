@@ -4,11 +4,19 @@ API REST para busca, download e streaming com suporte a playlists.
 """
 
 import os
+import logging
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_file
 
 from .scraper import YouTubeScraper
+
+# Configure logging to show auth method info
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 app = Flask(__name__)
 scraper = YouTubeScraper()
