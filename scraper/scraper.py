@@ -23,7 +23,22 @@ class YouTubeScraper:
         )
         os.makedirs(self.download_dir, exist_ok=True)
 
+        # Configurações para bypass do bloqueio do YouTube
+        self._common_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": False,
+            # Bypass YouTube bot detection
+            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            },
+        }
+
         self.ydl_opts = {
+            **self._common_opts,
             "format": "bestaudio/best",
             "postprocessors": [
                 {
@@ -33,11 +48,6 @@ class YouTubeScraper:
                 }
             ],
             "outtmpl": os.path.join(self.download_dir, "%(title)s.%(ext)s"),
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": False,
-            # Bypass YouTube bot detection usando Android client
-            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         }
 
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
@@ -209,10 +219,8 @@ class YouTubeScraper:
         """
         try:
             opts = {
-                "quiet": True,
-                "no_warnings": True,
+                **self._common_opts,
                 "format": "bestaudio/best",
-                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
             }
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
@@ -240,7 +248,7 @@ class YouTubeScraper:
     def get_video_info(self, video_url: str) -> Dict:
         """Obtém informações detalhadas do vídeo."""
         try:
-            with YoutubeDL({"quiet": True, "no_warnings": True, "extractor_args": {"youtube": {"player_client": ["android", "web"]}}}) as ydl:
+            with YoutubeDL(self._common_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
 
                 audio_formats = []
