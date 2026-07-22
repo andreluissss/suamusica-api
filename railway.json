@@ -1,0 +1,11 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "cd scraper && pip install -r requirements.txt"
+  },
+  "deploy": {
+    "startCommand": "python scraper/run_server.py",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}
