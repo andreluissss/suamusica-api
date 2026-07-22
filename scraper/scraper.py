@@ -36,6 +36,8 @@ class YouTubeScraper:
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
+            # Bypass YouTube bot detection usando Android client
+            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         }
 
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
@@ -210,6 +212,7 @@ class YouTubeScraper:
                 "quiet": True,
                 "no_warnings": True,
                 "format": "bestaudio/best",
+                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
             }
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
@@ -237,7 +240,7 @@ class YouTubeScraper:
     def get_video_info(self, video_url: str) -> Dict:
         """Obtém informações detalhadas do vídeo."""
         try:
-            with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+            with YoutubeDL({"quiet": True, "no_warnings": True, "extractor_args": {"youtube": {"player_client": ["android", "web"]}}}) as ydl:
                 info = ydl.extract_info(video_url, download=False)
 
                 audio_formats = []
