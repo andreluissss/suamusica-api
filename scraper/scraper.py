@@ -394,23 +394,17 @@ class YouTubeScraper:
             Tupla (url_stream, titulo)
         """
         try:
-            # Tenta primeiro com formato mais flexível
-            for fmt in ["bestaudio[ext=m4a]/bestaudio", "bestaudio/best", "bestaudio*", "worstaudio/worst"]:
-                try:
-                    info = self._extract_with_retry(
-                        video_url,
-                        download=False,
-                        opts_override={"format": fmt},
-                    )
-                    break
-                except Exception:
-                    continue
-            else:
-                raise Exception("Nenhum formato de áudio disponível para este vídeo")
-
-            audio_url = info.get("url", "")
+            # Tenta extrair sem especificar formato (deixa yt-dlp escolher)
+            info = self._extract_with_retry(
+                video_url,
+                download=False,
+            )
             title = info.get("title", "Sem título")
 
+            # Tenta obter a URL direta do áudio
+            audio_url = ""
+
+            # Priority 1: procura formato de áudio puro
             formats = info.get("formats", [])
             audio_formats = [
                 f for f in formats
@@ -422,7 +416,18 @@ class YouTubeScraper:
                     audio_formats,
                     key=lambda f: f.get("abr", 0) or 0,
                 )
-                audio_url = best_audio.get("url", audio_url)
+                audio_url = best_audio.get("url", "")
+
+            # Priority 2: usa a URL do próprio info (formato já selecionado)
+            if not audio_url:
+                audio_url = info.get("url", "")
+
+            # Priority 3: tenta o primeiro formato disponível
+            if not audio_url and formats:
+                audio_url = formats[0].get("url", "")
+
+            if not audio_url:
+                raise Exception("Não foi possível obter URL de áudio para este vídeo")
 
             return audio_url, title
 
