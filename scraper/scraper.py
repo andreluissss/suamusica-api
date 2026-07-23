@@ -464,11 +464,15 @@ class YouTubeScraper:
                 },
             }
 
-            # Aplica cookies se disponíveis
+            # Aplica configurações do _common_opts (proxy, cookies, etc.)
+            if "proxy" in self._common_opts:
+                stream_opts["proxy"] = self._common_opts["proxy"]
             if "cookiesfrombrowser" in self._common_opts:
                 stream_opts["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
             if "cookiefile" in self._common_opts:
                 stream_opts["cookiefile"] = self._common_opts["cookiefile"]
+            if "http_headers" in self._common_opts:
+                stream_opts["http_headers"] = self._common_opts["http_headers"]
 
             with YoutubeDL(stream_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
