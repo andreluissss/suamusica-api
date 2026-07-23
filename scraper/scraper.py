@@ -901,9 +901,9 @@ class YouTubeScraper:
 
         # Lista de configurações de streaming para tentar
         stream_configs = [
-            # Config 1: android + ios com DASH
+            # Config 1: android + ios com DASH - forçar áudio puro
             {
-                "format": "bestaudio/best",
+                "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
                 "extract_flat": False,
                 "quiet": True,
                 "no_warnings": True,
@@ -914,9 +914,9 @@ class YouTubeScraper:
                     }
                 },
             },
-            # Config 2: web_safari
+            # Config 2: web_safari - forçar áudio puro
             {
-                "format": "bestaudio/best",
+                "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
                 "extract_flat": False,
                 "quiet": True,
                 "no_warnings": True,
@@ -927,9 +927,9 @@ class YouTubeScraper:
                     }
                 },
             },
-            # Config 3: android TV
+            # Config 3: android TV - forçar áudio puro
             {
-                "format": "bestaudio/best",
+                "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
                 "extract_flat": False,
                 "quiet": True,
                 "no_warnings": True,
