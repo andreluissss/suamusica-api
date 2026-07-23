@@ -195,13 +195,11 @@ class YouTubeScraper:
                     raise  # Só tenta fallback se for bloqueio do YouTube
                 logger.warning(f"Cookies falharam, tentando estratégias alternativas: {error_msg[:100]}")
 
-        # Tenta cada estratégia de cliente
+        # Tenta cada estratégia de cliente (sempre mantendo cookies)
         last_error = None
         for i, strategy in enumerate(self._client_strategies):
             strategy_opts = dict(self._common_opts)
-            # Remove cookies se existirem (já falharam)
-            strategy_opts.pop("cookiesfrombrowser", None)
-            strategy_opts.pop("cookiefile", None)
+            # MANTÉM cookies nas estratégias (não remove mais)
             # Aplica estratégia
             strategy_opts["extractor_args"] = strategy["extractor_args"]
             if "http_headers" in strategy:
