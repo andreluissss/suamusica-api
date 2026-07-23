@@ -184,7 +184,7 @@ def health():
 
 
 def run_server(host="0.0.0.0", port=5000, debug=False):
-    print(f"\n🎵 YouTube Music Scraper API v2.1")
+    print(f"\n🎵 YouTube Music Scraper API v2.2")
     print(f"   Rodando em: http://{host}:{port}")
     print(f"   Downloads: {scraper.download_dir}")
     print(f"\n📌 Exemplos:")
