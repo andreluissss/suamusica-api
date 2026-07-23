@@ -388,12 +388,29 @@ class YouTubeScraper:
             Tupla (url_stream, titulo)
         """
         try:
-            # Tenta extrair sem especificar formato (deixa yt-dlp escolher)
-            info = self._extract_with_retry(
-                video_url,
-                download=False,
-            )
-            title = info.get("title", "Sem título")
+            # Configurações específicas para obter URL de streaming
+            stream_opts = {
+                "format": "bestaudio/best",
+                "extract_flat": False,
+                "quiet": True,
+                "no_warnings": True,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "ios"],
+                        "include_dash_manifest": True,  # Importante para URLs de streaming
+                    }
+                },
+            }
+
+            # Aplica cookies se disponíveis
+            if "cookiesfrombrowser" in self._common_opts:
+                stream_opts["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
+            if "cookiefile" in self._common_opts:
+                stream_opts["cookiefile"] = self._common_opts["cookiefile"]
+
+            with YoutubeDL(stream_opts) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+                title = info.get("title", "Sem título")
 
             # Tenta obter a URL direta do áudio
             audio_url = ""
