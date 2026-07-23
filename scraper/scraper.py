@@ -1,26 +1,78 @@
 """
 Módulo principal do YouTube Scraper.
 Motor completo: busca músicas, playlists, download e streaming de áudio.
-Usa yt-dlp (não requer API key).
+Usa yt-dlp (não requer API key) com múltiplas estratégias anti-bloqueio,
+rate limiting, cache inteligente e fallback progressivo.
+
+Inspirado nas melhores práticas de ferramentas como SnapTube, Muka e yt-dlp.
 """
 
 import os
 import re
+import json
+import time
+import random
 import logging
 import base64
 import tempfile
+import hashlib
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional, Tuple, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from yt_dlp import YoutubeDL
 
 logger = logging.getLogger(__name__)
 
 
+class MemoryCache:
+    """
+    Cache simples em memória com TTL (time-to-live).
+    Evita requisições repetidas para buscas idênticas.
+    """
+
+    def __init__(self, ttl_seconds: int = 120):
+        self._cache: Dict[str, Tuple[Any, datetime]] = {}
+        self._ttl = ttl_seconds
+
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            data, expiry = self._cache[key]
+            if datetime.now() < expiry:
+                return data
+            del self._cache[key]
+        return None
+
+    def set(self, key: str, value: Any):
+        self._cache[key] = (value, datetime.now() + timedelta(seconds=self._ttl))
+
+    def clear(self):
+        self._cache.clear()
+
+    def remove(self, key: str):
+        self._cache.pop(key, None)
+
+
+def compute_cache_key(*args, **kwargs) -> str:
+    """Gera uma chave de cache única baseada nos argumentos."""
+    raw = str(args) + str(sorted(kwargs.items()))
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
 class YouTubeScraper:
     """
-    Classe principal para scraping de áudio do YouTube.
+    Classe principal para scraping de áudio do YouTube com múltiplas
+    estratégias de fallback, rate limiting e cache inteligente.
     """
+
+    # Delay mínimo entre requisições (em segundos)
+    MIN_REQUEST_DELAY = 1.0
+    # Delay máximo entre requisições (jitter aleatório)
+    MAX_REQUEST_DELAY = 3.0
+
+    # Timeout para operações de rede (em segundos)
+    NETWORK_TIMEOUT = 30
 
     def __init__(self, download_dir: Optional[str] = None):
         self.download_dir = download_dir or os.path.join(
@@ -29,29 +81,39 @@ class YouTubeScraper:
         os.makedirs(self.download_dir, exist_ok=True)
         self._temp_cookie_file = None
 
+        # Cache de busca (2 minutos de TTL)
+        self._search_cache = MemoryCache(ttl_seconds=120)
+        # Cache de info de vídeo (10 minutos de TTL)
+        self._info_cache = MemoryCache(ttl_seconds=600)
+
+        # Timestamp da última requisição para rate limiting
+        self._last_request_time = 0.0
+
         # Verificar se está rodando em ambiente cloud
         self._is_cloud_env = self._detect_cloud_environment()
 
         # Configurações para bypass do bloqueio do YouTube
-        # Ordem de precedência:
-        # 1. YOUTUBE_PROXY - proxy HTTP/SOCKS para mascarar IP (recomendado para cloud)
-        # 2. YOUTUBE_COOKIES_FROM_BROWSER - extrai cookies de um navegador
-        #    Valores: chrome, firefox, edge, brave, opera, chromium, safari, vivaldi
-        # 3. YOUTUBE_COOKIES_FILE - caminho para um arquivo de cookies.txt
-        # 4. YOUTUBE_COOKIES_BASE64 - cookies em formato base64 (útil para Render/cloud)
-        # 5. Detecção automática de cookies de navegadores instalados
-        # 6. Múltiplas estratégias de cliente (android, ios, web) com retry
         proxy_url = os.environ.get("YOUTUBE_PROXY", "")
         cookies_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER", "")
         cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
         cookies_base64 = os.environ.get("YOUTUBE_COOKIES_BASE64", "")
 
+        # Lista de User-Agents realistas para rotacionar
+        self._user_agents = [
+            # Chrome Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            # Chrome macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            # Firefox Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+            # Edge Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        ]
+
         # Headers realistas para evitar detecção
-        self._http_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        }
+        self._http_headers = self._generate_headers()
 
         # Configuração base
         self._common_opts = {
@@ -67,6 +129,10 @@ class YouTubeScraper:
             },
             "extractor_retries": 3,
             "file_access_retries": 3,
+            "fragment_retries": 3,
+            "retries": 3,
+            "skip_unavailable_fragments": True,
+            "socket_timeout": self.NETWORK_TIMEOUT,
         }
 
         # Configurar proxy se fornecido
@@ -87,24 +153,17 @@ class YouTubeScraper:
             auth_source = f"cookies file ({cookies_file})"
             logger.info(f"Usando arquivo de cookies: {cookies_file}")
         elif cookies_base64:
-            # Decodifica cookies base64 e salva em arquivo temporário
             try:
                 cookies_content = base64.b64decode(cookies_base64).decode('utf-8')
                 temp_cookie_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
                 temp_cookie_file.write(cookies_content)
                 temp_cookie_file.close()
                 self._common_opts["cookiefile"] = temp_cookie_file.name
-                self._temp_cookie_file = temp_cookie_file.name  # Guarda referência para limpeza
+                self._temp_cookie_file = temp_cookie_file.name
                 auth_source = "cookies base64 (environment variable)"
                 logger.info(f"Usando cookies base64 da variável de ambiente")
             except Exception as e:
                 logger.warning(f"Erro ao decodificar cookies base64: {e}")
-        else:
-            detected = self._detect_browser_cookies()
-            if detected:
-                auth_source = f"browser auto-detect ({detected})"
-                logger.info(f"Cookies detectados automaticamente do navegador: {detected}")
-
         if not auth_source:
             auth_source = "client android/ios (sem cookies)"
             logger.info("Usando client android/ios sem cookies. Se falhar, configure YOUTUBE_COOKIES_FILE")
@@ -112,8 +171,120 @@ class YouTubeScraper:
         logger.info(f"Método de autenticação: {auth_source}")
 
         # Lista de estratégias de cliente para tentar em caso de bloqueio
-        self._client_strategies = [
-            # Estratégia 1: android + ios (padrão)
+        self._client_strategies = self._build_client_strategies()
+
+        # Configurações para download de áudio
+        self.ydl_opts = {
+            **self._common_opts,
+            "format": "bestaudio/best",
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }
+            ],
+            "outtmpl": os.path.join(self.download_dir, "%(title)s.%(ext)s"),
+            # Concatenação de fragmentos para streams fragmentados
+            "concurrent_fragment_downloads": 5,
+        }
+
+    def _generate_headers(self) -> Dict[str, str]:
+        """Gera headers HTTP realistas com User-Agent aleatório."""
+        ua = random.choice(self._user_agents)
+        return {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+            "DNT": "1",
+        }
+
+    def _rotate_user_agent(self):
+        """Rotaciona o User-Agent para a próxima requisição."""
+        self._http_headers = self._generate_headers()
+        self._common_opts["http_headers"] = dict(self._http_headers)
+        # Atualiza também nas estratégias que têm http_headers
+        for strategy in self._client_strategies:
+            if "http_headers" in strategy:
+                strategy["http_headers"]["User-Agent"] = self._http_headers["User-Agent"]
+
+    def _apply_rate_limit(self):
+        """
+        Aplica rate limiting com jitter aleatório entre requisições.
+        Essencial para evitar detecção como bot e bloqueio de IP.
+        """
+        elapsed = time.time() - self._last_request_time
+        delay = random.uniform(self.MIN_REQUEST_DELAY, self.MAX_REQUEST_DELAY)
+        if elapsed < delay:
+            sleep_time = delay - elapsed
+            logger.debug(f"Rate limit: aguardando {sleep_time:.2f}s")
+            time.sleep(sleep_time)
+        self._last_request_time = time.time()
+
+    def _detect_cloud_environment(self) -> bool:
+        """Detecta se está rodando em ambiente cloud."""
+        indicators = [
+            os.path.exists("/proc/self/cgroup"),
+            os.path.exists("/.dockerenv"),
+            os.environ.get("RENDER", "") != "",
+            os.environ.get("DYNO", "") != "",
+            os.environ.get("HEROKU", "") != "",
+            os.environ.get("RAILWAY_ENVIRONMENT", "") != "",
+            os.environ.get("FLY_APP_NAME", "") != "",
+        ]
+        return any(indicators)
+
+    def _detect_browser_cookies(self) -> Optional[str]:
+        """
+        Tenta detectar cookies de navegadores instalados automaticamente.
+        Retorna o nome do navegador ou None. Suprime warnings do yt-dlp.
+        """
+        browsers = ["chrome", "firefox", "edge", "brave", "opera", "chromium", "vivaldi"]
+        
+        # Suprime logs do yt-dlp durante detecção
+        yt_logger = logging.getLogger("yt_dlp")
+        old_level = yt_logger.level
+        yt_logger.setLevel(logging.CRITICAL + 1)  # Suprime tudo
+        
+        try:
+            for browser in browsers:
+                try:
+                    test_opts = {
+                        "quiet": True,
+                        "no_warnings": True,
+                        "extract_flat": True,
+                        "logger": type('NullLogger', (), {
+                            'debug': lambda *a: None,
+                            'info': lambda *a: None,
+                            'warning': lambda *a: None,
+                            'error': lambda *a: None,
+                        })(),
+                    }
+                    with YoutubeDL(test_opts) as ydl:
+                        info = ydl.extract_info("ytsearch1:test", download=False)
+                        if info:
+                            self._common_opts["cookiesfrombrowser"] = browser
+                            return browser
+                except Exception:
+                    continue
+        finally:
+            yt_logger.setLevel(old_level)
+        
+        return None
+
+    def _build_client_strategies(self) -> List[Dict]:
+        """
+        Constrói lista de estratégias de cliente para fallback.
+        Quanto mais estratégias, maior a chance de sucesso.
+        """
+        return [
+            # Estratégia 1: android + ios (padrão - mais leve)
             {
                 "extractor_args": {
                     "youtube": {
@@ -131,9 +302,9 @@ class YouTubeScraper:
                     }
                 },
                 "http_headers": {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
+                    "Accept-Language": "en-US,en;q=0.9",
                 },
             },
             # Estratégia 3: android TV - diferente dos clientes comuns
@@ -172,92 +343,139 @@ class YouTubeScraper:
                     }
                 },
                 "http_headers": {
-                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            },
+            # Estratégia 7: tv_embedded - Android TV embutido
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["tv_embedded"],
+                        "include_dash_manifest": False,
+                    }
+                },
+            },
+            # Estratégia 8: iOS + tvOS 
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["ios", "tvos"],
+                        "include_dash_manifest": False,
+                    }
+                },
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
                 },
             },
         ]
 
-        self.ydl_opts = {
-            **self._common_opts,
-            "format": "bestaudio/best",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
-            "outtmpl": os.path.join(self.download_dir, "%(title)s.%(ext)s"),
-        }
+    def _check_youtube_connectivity(self) -> bool:
+        """
+        Verifica rapidamente se o YouTube está acessível.
+        Usa uma busca mínima para testar conectividade.
+        """
+        try:
+            test_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "extract_flat": True,
+                "socket_timeout": 10,
+            }
+            with YoutubeDL(test_opts) as ydl:
+                ydl.extract_info("ytsearch1:test", download=False)
+            return True
+        except Exception as e:
+            error_str = str(e).lower()
+            if "connection" in error_str or "timeout" in error_str or "resolve" in error_str:
+                logger.warning(f"YouTube parece inacessível: {e}")
+                return False
+            # Outros erros podem ser de conteúdo, não conectividade
+            return True
 
-    def _detect_cloud_environment(self) -> bool:
-        """Detecta se está rodando em ambiente cloud."""
-        indicators = [
-            os.path.exists("/proc/self/cgroup"),
-            os.path.exists("/.dockerenv"),
-            os.environ.get("RENDER", "") != "",
-            os.environ.get("DYNO", "") != "",
-            os.environ.get("HEROKU", "") != "",
+    def _should_retry_error(self, error: Exception) -> bool:
+        """
+        Verifica se o erro é um tipo que vale a pena tentar novamente
+        com estratégia diferente (bloqueio, sign in, bot detection, etc).
+        """
+        error_msg = str(error).lower()
+        retryable_patterns = [
+            "sign in",
+            "signin",
+            "bot",
+            "captcha",
+            "unavailable",
+            "rate limit",
+            "too many requests",
+            "429",
+            "403",
+            "http error 403",
+            "http error 429",
+            "requested format not available",
+            "no video formats found",
+            "this video is unavailable",
+            "age restriction",
+            "age-gate",
+            "confirm your age",
+            "video unavailable",
+            "playback on other websites",
         ]
-        return any(indicators)
+        return any(pattern in error_msg for pattern in retryable_patterns)
 
-    def _detect_browser_cookies(self) -> Optional[str]:
+    def _extract_with_retry(self, url: str, download: bool = False,
+                            opts_override: Optional[Dict] = None,
+                            use_cache: bool = False) -> Dict:
         """
-        Tenta detectar cookies de navegadores instalados automaticamente.
-        Retorna o nome do navegador ou None.
-        """
-        browsers = ["chrome", "firefox", "edge", "brave", "opera", "chromium", "vivaldi", "safari"]
-        for browser in browsers:
-            try:
-                test_opts = {
-                    "quiet": True,
-                    "no_warnings": True,
-                    "cookiesfrombrowser": browser,
-                    "extract_flat": True,
-                }
-                with YoutubeDL(test_opts) as ydl:
-                    info = ydl.extract_info("ytsearch1:test", download=False)
-                    if info:
-                        self._common_opts["cookiesfrombrowser"] = browser
-                        return browser
-            except Exception:
-                continue
-        return None
-
-    def _extract_with_retry(self, url: str, download: bool = False, opts_override: Optional[Dict] = None) -> Dict:
-        """
-        Tenta extrair informações com múltiplas estratégias de cliente.
-        Se uma estratégia falhar com bloqueio, tenta a próxima.
+        Tenta extrair informações com múltiplas estratégias de cliente,
+        rate limiting e rotação de User-Agent.
 
         Args:
             url: URL do YouTube
             download: Se deve baixar o áudio
             opts_override: Opções extras para sobrescrever
+            use_cache: Se deve usar cache para esta extração
 
         Returns:
             Informações extraídas
         """
+        # Rate limiting antes de qualquer requisição
+        self._apply_rate_limit()
+
+        # Verificar cache se aplicável
+        if use_cache and not download:
+            cache_key = compute_cache_key(url, opts_override)
+            cached = self._info_cache.get(cache_key)
+            if cached:
+                logger.debug(f"Cache hit para {url[:50]}...")
+                return cached
+
         # Se já tem cookies configurados, tenta direto primeiro
-        if "cookiesfrombrowser" in self._common_opts or "cookiefile" in self._common_opts:
+        cookies_available = (
+            "cookiesfrombrowser" in self._common_opts or
+            "cookiefile" in self._common_opts
+        )
+
+        if cookies_available:
             base_opts = dict(self._common_opts)
             if opts_override:
                 base_opts.update(opts_override)
             try:
-                with YoutubeDL(base_opts) as ydl:
-                    return ydl.extract_info(url, download=download)
+                result = self._execute_extraction(url, base_opts, download)
+                if use_cache and not download:
+                    self._info_cache.set(cache_key, result)
+                return result
             except Exception as e:
-                error_msg = str(e)
-                if "Sign in" not in error_msg and "bot" not in error_msg.lower():
-                    raise  # Só tenta fallback se for bloqueio do YouTube
-                logger.warning(f"Cookies falharam, tentando estratégias alternativas: {error_msg[:100]}")
+                if not self._should_retry_error(e):
+                    raise
+                logger.warning(f"Cookies falharam, tentando estratégias alternativas: {str(e)[:100]}")
 
         # Tenta cada estratégia de cliente (sempre mantendo cookies)
         last_error = None
         for i, strategy in enumerate(self._client_strategies):
             strategy_opts = dict(self._common_opts)
-            # MANTÉM cookies nas estratégias (não remove mais)
             # Aplica estratégia
             strategy_opts["extractor_args"] = strategy["extractor_args"]
             if "http_headers" in strategy:
@@ -265,24 +483,54 @@ class YouTubeScraper:
             if opts_override:
                 strategy_opts.update(opts_override)
 
+            # Rotaciona User-Agent a cada tentativa
+            self._rotate_user_agent()
+            strategy_opts["http_headers"] = dict(self._http_headers)
+
             try:
-                logger.info(f"Tentando estratégia {i + 1}: {strategy['extractor_args']['youtube']['player_client']}")
-                with YoutubeDL(strategy_opts) as ydl:
-                    return ydl.extract_info(url, download=download)
+                logger.info(
+                    f"Tentando estratégia {i + 1}/{len(self._client_strategies)}: "
+                    f"{strategy['extractor_args']['youtube']['player_client']}"
+                )
+                result = self._execute_extraction(url, strategy_opts, download)
+                if use_cache and not download:
+                    self._info_cache.set(cache_key, result)
+                return result
             except Exception as e:
                 last_error = e
-                error_msg = str(e)
-                if "Sign in" not in error_msg and "bot" not in error_msg.lower():
-                    raise  # Erro diferente de bloqueio - não adianta tentar outra estratégia
-                logger.warning(f"Estratégia {i + 1} falhou: {error_msg[:100]}")
+                if not self._should_retry_error(e):
+                    raise
+                logger.warning(
+                    f"Estratégia {i + 1} falhou: {str(e)[:100]}"
+                )
+                # Delay entre estratégias para parecer menos agressivo
+                time.sleep(random.uniform(0.5, 1.5))
                 continue
 
         # Se todas falharam, levanta o último erro
         raise last_error or Exception("Todas as estratégias de extração falharam")
 
+    def _execute_extraction(self, url: str, opts: Dict, download: bool = False) -> Dict:
+        """
+        Executa a extração com as opções fornecidas.
+        Trata erros comuns de rede e parsing.
+        """
+        try:
+            with YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=download)
+        except Exception as e:
+            error_msg = str(e)
+            # Trata erro de rede específico
+            if "Connection" in error_msg or "connection" in error_msg:
+                raise ConnectionError(f"Erro de conexão com o YouTube: {error_msg[:100]}")
+            if "timed out" in error_msg or "timeout" in error_msg:
+                raise TimeoutError(f"Timeout ao contactar o YouTube: {error_msg[:100]}")
+            raise
+
     def search(self, query: str, max_results: int = 10) -> List[Dict]:
         """
-        Busca músicas/artistas. Retorna vídeos e playlists.
+        Busca músicas/artistas/playlists com cache e retry.
+        Retorna vídeos e playlists.
 
         Args:
             query: Termo de busca
@@ -291,50 +539,152 @@ class YouTubeScraper:
         Returns:
             Lista com type='video' ou type='playlist'
         """
+        # Verificar cache
+        cache_key = f"search:{query}:{max_results}"
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"Cache hit para busca: '{query}'")
+            return cached
+
+        # Rate limiting
+        self._apply_rate_limit()
+        self._rotate_user_agent()
+
         results = []
         search_query = f"ytsearch{max_results}:{query}"
 
+        # Tenta busca com opções básicas (mais compatível)
+        last_error = None
+        base_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+            "http_headers": dict(self._http_headers),
+        }
+        # Copia cookies/proxy do common_opts
+        if "cookiesfrombrowser" in self._common_opts:
+            base_opts["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
+        if "cookiefile" in self._common_opts:
+            base_opts["cookiefile"] = self._common_opts["cookiefile"]
+        if "proxy" in self._common_opts:
+            base_opts["proxy"] = self._common_opts["proxy"]
+
         try:
-            with YoutubeDL({
-                "quiet": True,
-                "no_warnings": True,
-                "extract_flat": True,
-            }) as ydl:
+            with YoutubeDL(base_opts) as ydl:
                 info = ydl.extract_info(search_query, download=False)
 
-                if info and "entries" in info:
-                    for entry in info["entries"]:
-                        if not entry:
-                            continue
-
-                        entry_type = entry.get("ie_key", "") or entry.get("extractor", "")
-                        is_playlist = "playlist" in entry_type.lower() if entry_type else False
-
-                        video = {
-                            "id": entry.get("id", ""),
-                            "title": entry.get("title", "Sem título"),
-                            "channel": entry.get("channel", entry.get("uploader", "Desconhecido")),
-                            "duration": self._format_duration(entry.get("duration", 0)),
-                            "duration_seconds": entry.get("duration", 0),
-                            "views": entry.get("view_count", 0),
-                            "type": "playlist" if is_playlist else "video",
-                            "url": (
-                                f"https://www.youtube.com/playlist?list={entry.get('id')}"
-                                if is_playlist
-                                else f"https://www.youtube.com/watch?v={entry.get('id', '')}"
-                            ),
-                            "thumbnail": (
-                                entry.get("thumbnails", [{}])[0].get("url", "")
-                                if entry.get("thumbnails")
-                                else ""
-                            ),
-                        }
-                        results.append(video)
-
-            return results
+            if info and "entries" in info:
+                results = self._parse_search_results(info["entries"])
 
         except Exception as e:
-            raise Exception(f"Erro na busca: {str(e)}")
+            last_error = e
+            logger.warning(f"Busca com opções básicas falhou: {str(e)[:100]}")
+
+            # Fallback: tenta sem http_headers extras
+            try:
+                fallback_opts = dict(base_opts)
+                fallback_opts.pop("http_headers", None)
+                fallback_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["android", "ios"],
+                    }
+                }
+                with YoutubeDL(fallback_opts) as ydl:
+                    info = ydl.extract_info(search_query, download=False)
+                if info and "entries" in info:
+                    results = self._parse_search_results(info["entries"])
+            except Exception as e2:
+                last_error = e2
+                logger.warning(f"Busca fallback também falhou: {str(e2)[:100]}")
+
+        # Se todas as tentativas falharam
+        if not results and last_error:
+            raise Exception(f"Erro na busca: {str(last_error)}")
+
+        # Salva no cache
+        self._search_cache.set(cache_key, results)
+
+        return results
+
+    def _parse_search_results(self, entries: List) -> List[Dict]:
+        """
+        Parseia os resultados da busca de forma robusta.
+        Extrai thumbnails corretamente mesmo com extract_flat.
+        """
+        results = []
+
+        for entry in entries:
+            if not entry:
+                continue
+
+            try:
+                entry_type = entry.get("ie_key", "") or entry.get("extractor", "")
+                is_playlist = "playlist" in entry_type.lower() if entry_type else False
+
+                # Extrair thumbnail de forma robusta
+                thumbnail = ""
+                raw_thumbnails = entry.get("thumbnails") or entry.get("thumbnail", "")
+                if isinstance(raw_thumbnails, list) and raw_thumbnails:
+                    for thumb in raw_thumbnails:
+                        url = thumb.get("url", "")
+                        if url and ("maxresdefault" in url or "hqdefault" in url or "mqdefault" in url):
+                            thumbnail = url
+                            break
+                    if not thumbnail:
+                        thumbnail = raw_thumbnails[0].get("url", "")
+                elif isinstance(raw_thumbnails, str) and raw_thumbnails:
+                    thumbnail = raw_thumbnails
+
+                # Extrair channel/uploader de forma robusta
+                channel = (
+                    entry.get("channel") or
+                    entry.get("uploader") or
+                    entry.get("creator") or
+                    entry.get("artist") or
+                    "Desconhecido"
+                )
+                if isinstance(channel, dict):
+                    channel = channel.get("name", "Desconhecido")
+
+                # Duração
+                duration_raw = entry.get("duration", 0)
+                try:
+                    duration_seconds = int(float(duration_raw or 0))
+                except (ValueError, TypeError):
+                    duration_seconds = 0
+
+                # Views
+                views_raw = entry.get("view_count", 0) or 0
+                try:
+                    views = int(float(views_raw))
+                except (ValueError, TypeError):
+                    views = 0
+
+                video = {
+                    "id": entry.get("id", ""),
+                    "title": entry.get("title", "Sem título") or "Sem título",
+                    "channel": str(channel),
+                    "duration": self._format_duration(duration_seconds),
+                    "duration_seconds": duration_seconds,
+                    "views": views,
+                    "type": "playlist" if is_playlist else "video",
+                    "url": (
+                        f"https://www.youtube.com/playlist?list={entry.get('id')}"
+                        if is_playlist
+                        else f"https://www.youtube.com/watch?v={entry.get('id', '')}"
+                    ),
+                    "thumbnail": thumbnail,
+                }
+
+                # Só adiciona se tiver ID válido
+                if video["id"]:
+                    results.append(video)
+
+            except Exception as e:
+                logger.debug(f"Erro ao processar entry: {e}")
+                continue
+
+        return results
 
     def search_playlists(self, query: str, max_results: int = 5) -> List[Dict]:
         """
@@ -353,7 +703,7 @@ class YouTubeScraper:
 
     def get_playlist_tracks(self, playlist_url: str) -> List[Dict]:
         """
-        Extrai as faixas individuais de uma playlist.
+        Extrai as faixas individuais de uma playlist com retry.
         Cada faixa é um áudio separado (não um único arquivo).
 
         Args:
@@ -363,14 +713,54 @@ class YouTubeScraper:
             Lista de dicionários com cada música da playlist
         """
         tracks = []
-        try:
-            with YoutubeDL({
+        last_error = None
+
+        # Verifica URL
+        if not playlist_url or "list=" not in playlist_url:
+            # Tenta extrair ID de outros formatos
+            playlist_id = playlist_url.strip()
+            if playlist_id and len(playlist_id) > 10:
+                playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+            else:
+                raise ValueError("URL de playlist inválida")
+
+        # Rate limiting
+        self._apply_rate_limit()
+        self._rotate_user_agent()
+
+        # Configurações para tentar
+        playlist_configs = [
+            {
                 "quiet": True,
                 "no_warnings": True,
                 "extract_flat": True,
-                "playlistend": 50,  # Limite de 50 músicas
-            }) as ydl:
-                info = ydl.extract_info(playlist_url, download=False)
+                "playlistend": 50,
+            },
+            {
+                "quiet": True,
+                "no_warnings": True,
+                "extract_flat": False,
+                "playlistend": 50,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "ios"],
+                    }
+                },
+            },
+        ]
+
+        for config in playlist_configs:
+            try:
+                # Copia cookies/proxy
+                if "cookiesfrombrowser" in self._common_opts:
+                    config["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
+                if "cookiefile" in self._common_opts:
+                    config["cookiefile"] = self._common_opts["cookiefile"]
+                if "proxy" in self._common_opts:
+                    config["proxy"] = self._common_opts["proxy"]
+
+                with YoutubeDL(config) as ydl:
+                    info = ydl.extract_info(playlist_url, download=False)
 
                 playlist_title = info.get("title", "Playlist sem nome")
                 entries = info.get("entries", [])
@@ -379,26 +769,54 @@ class YouTubeScraper:
                     if not entry:
                         continue
 
-                    track = {
-                        "id": entry.get("id", ""),
-                        "title": entry.get("title", "Sem título"),
-                        "channel": entry.get("channel", entry.get("uploader", "Desconhecido")),
-                        "duration": self._format_duration(entry.get("duration", 0)),
-                        "duration_seconds": entry.get("duration", 0),
-                        "type": "track",
-                        "url": f"https://www.youtube.com/watch?v={entry.get('id', '')}",
-                        "playlist": playlist_title,
-                    }
-                    tracks.append(track)
+                    try:
+                        duration_raw = entry.get("duration", 0)
+                        try:
+                            duration_seconds = int(float(duration_raw or 0))
+                        except (ValueError, TypeError):
+                            duration_seconds = 0
 
-            return tracks
+                        channel = (
+                            entry.get("channel") or
+                            entry.get("uploader") or
+                            "Desconhecido"
+                        )
+                        if isinstance(channel, dict):
+                            channel = channel.get("name", "Desconhecido")
 
-        except Exception as e:
-            raise Exception(f"Erro ao obter faixas da playlist: {str(e)}")
+                        track = {
+                            "id": entry.get("id", ""),
+                            "title": entry.get("title", "Sem título") or "Sem título",
+                            "channel": str(channel),
+                            "duration": self._format_duration(duration_seconds),
+                            "duration_seconds": duration_seconds,
+                            "type": "track",
+                            "url": f"https://www.youtube.com/watch?v={entry.get('id', '')}",
+                            "playlist": playlist_title,
+                        }
+                        if track["id"]:
+                            tracks.append(track)
+                    except Exception as e:
+                        logger.debug(f"Erro ao processar track da playlist: {e}")
+                        continue
+
+                if tracks:
+                    logger.info(f"Playlist '{playlist_title}': {len(tracks)} faixas extraídas")
+                    return tracks
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Erro ao extrair playlist: {str(e)[:100]}")
+                time.sleep(random.uniform(0.5, 1.5))
+                continue
+
+        if last_error:
+            raise Exception(f"Erro ao obter faixas da playlist: {str(last_error)}")
+        return tracks
 
     def download_audio(self, video_url: str, filename: Optional[str] = None) -> str:
         """
-        Baixa o áudio como MP3.
+        Baixa o áudio como MP3 com retry e verificação de integridade.
 
         Args:
             video_url: URL do vídeo
@@ -408,34 +826,43 @@ class YouTubeScraper:
             Caminho do arquivo MP3
         """
         opts_override = dict(self.ydl_opts)
-        # Remove _common_opts keys that would conflict since we pass them via _extract_with_retry
-        for key in ("quiet", "no_warnings", "extract_flat", "http_headers", "extractor_args", "cookiesfrombrowser", "cookiefile"):
+        # Remove chaves que conflitam com _common_opts
+        for key in ("quiet", "no_warnings", "extract_flat", "http_headers",
+                     "extractor_args", "cookiesfrombrowser", "cookiefile",
+                     "socket_timeout", "extractor_retries", "file_access_retries",
+                     "fragment_retries", "retries", "skip_unavailable_fragments"):
             opts_override.pop(key, None)
 
         if filename:
             safe_name = re.sub(r'[<>:"/\\|?*]', '_', filename)[:100]
-            file_path = os.path.join(self.download_dir, f"{safe_name}.%(ext)s")
-            opts_override["outtmpl"] = file_path
+            opts_override["outtmpl"] = os.path.join(self.download_dir, f"{safe_name}.%(ext)s")
 
         try:
             info = self._extract_with_retry(video_url, download=True, opts_override=opts_override)
             title = info.get("title", "audio_downloaded")
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)[:100]
 
             expected_file = os.path.join(
                 self.download_dir,
-                f"{filename or title}.mp3",
+                f"{filename or safe_title}.mp3",
             )
 
-            if os.path.exists(expected_file):
+            # Verifica se o arquivo existe
+            if os.path.exists(expected_file) and os.path.getsize(expected_file) > 0:
                 return expected_file
 
+            # Se não encontrou, busca o MP3 mais recente
             mp3_files = sorted(
                 Path(self.download_dir).glob("*.mp3"),
                 key=os.path.getmtime,
                 reverse=True,
             )
             if mp3_files:
-                return str(mp3_files[0])
+                # Verifica se o mais recente foi modificado nos últimos 30 segundos
+                latest = mp3_files[0]
+                if time.time() - os.path.getmtime(latest) < 30:
+                    if os.path.getsize(latest) > 1024:  # Maior que 1KB
+                        return str(latest)
 
             return expected_file
 
@@ -444,14 +871,26 @@ class YouTubeScraper:
 
     def get_audio_stream_url(self, video_url: str) -> Tuple[str, str]:
         """
-        Obtém URL direta do stream de áudio.
+        Obtém URL direta do stream de áudio com múltiplas estratégias.
 
         Returns:
             Tupla (url_stream, titulo)
         """
-        try:
-            # Configurações específicas para obter URL de streaming
-            stream_opts = {
+        # Verifica cache
+        cache_key = compute_cache_key("stream", video_url)
+        cached = self._info_cache.get(cache_key)
+        if cached:
+            return cached
+
+        self._apply_rate_limit()
+        self._rotate_user_agent()
+
+        last_error = None
+
+        # Lista de configurações de streaming para tentar
+        stream_configs = [
+            # Config 1: android + ios com DASH
+            {
                 "format": "bestaudio/best",
                 "extract_flat": False,
                 "quiet": True,
@@ -459,66 +898,152 @@ class YouTubeScraper:
                 "extractor_args": {
                     "youtube": {
                         "player_client": ["android", "ios"],
-                        "include_dash_manifest": True,  # Importante para URLs de streaming
+                        "include_dash_manifest": True,
                     }
                 },
-            }
+            },
+            # Config 2: web_safari
+            {
+                "format": "bestaudio/best",
+                "extract_flat": False,
+                "quiet": True,
+                "no_warnings": True,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["web_safari"],
+                        "include_dash_manifest": True,
+                    }
+                },
+            },
+            # Config 3: android TV
+            {
+                "format": "bestaudio/best",
+                "extract_flat": False,
+                "quiet": True,
+                "no_warnings": True,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android_tv"],
+                        "include_dash_manifest": True,
+                    }
+                },
+            },
+        ]
 
-            # Aplica configurações do _common_opts (proxy, cookies, etc.)
-            if "proxy" in self._common_opts:
-                stream_opts["proxy"] = self._common_opts["proxy"]
-            if "cookiesfrombrowser" in self._common_opts:
-                stream_opts["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
-            if "cookiefile" in self._common_opts:
-                stream_opts["cookiefile"] = self._common_opts["cookiefile"]
-            if "http_headers" in self._common_opts:
-                stream_opts["http_headers"] = self._common_opts["http_headers"]
+        for config in stream_configs:
+            try:
+                # Aplica configurações do _common_opts (proxy, cookies, etc.)
+                if "proxy" in self._common_opts:
+                    config["proxy"] = self._common_opts["proxy"]
+                if "cookiesfrombrowser" in self._common_opts:
+                    config["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
+                if "cookiefile" in self._common_opts:
+                    config["cookiefile"] = self._common_opts["cookiefile"]
 
-            with YoutubeDL(stream_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                title = info.get("title", "Sem título")
+                with YoutubeDL(config) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+                    title = info.get("title", "Sem título")
 
-            # Tenta obter a URL direta do áudio
-            audio_url = ""
+                if not info:
+                    continue
 
-            # Priority 1: procura formato de áudio puro
-            formats = info.get("formats", [])
-            audio_formats = [
-                f for f in formats
-                if f.get("vcodec") == "none" and f.get("acodec") != "none"
-            ]
+                # Tenta obter a URL direta do áudio
+                audio_url = self._extract_best_audio_url(info)
 
-            if audio_formats:
-                best_audio = max(
-                    audio_formats,
-                    key=lambda f: f.get("abr", 0) or 0,
-                )
-                audio_url = best_audio.get("url", "")
+                if audio_url:
+                    result = (audio_url, title)
+                    self._info_cache.set(cache_key, result)
+                    return result
 
-            # Priority 2: usa a URL do próprio info (formato já selecionado)
-            if not audio_url:
-                audio_url = info.get("url", "")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Config de stream {stream_configs.index(config) + 1} falhou: {str(e)[:100]}")
+                time.sleep(random.uniform(0.5, 1.0))
+                continue
 
-            # Priority 3: tenta o primeiro formato disponível
-            if not audio_url and formats:
-                audio_url = formats[0].get("url", "")
+        # Se chegou aqui, tenta uma abordagem mais agressiva
+        try:
+            # Tenta com todas as estratégias de cliente
+            info = self._extract_with_retry(video_url, download=False)
+            title = info.get("title", "Sem título")
+            audio_url = self._extract_best_audio_url(info)
 
-            if not audio_url:
-                raise Exception("Não foi possível obter URL de áudio para este vídeo")
-
-            return audio_url, title
-
+            if audio_url:
+                result = (audio_url, title)
+                self._info_cache.set(cache_key, result)
+                return result
         except Exception as e:
-            raise Exception(f"Erro ao obter stream: {str(e)}")
+            last_error = e
+
+        raise last_error or Exception("Não foi possível obter URL de áudio para este vídeo")
+
+    def _extract_best_audio_url(self, info: Dict) -> str:
+        """
+        Extrai a melhor URL de áudio disponível das informações do vídeo.
+        Tenta múltiplas fontes em ordem de preferência.
+        """
+        formats = info.get("formats", [])
+
+        # Priority 1: formato de áudio puro (vcodec=none)
+        audio_formats = [
+            f for f in formats
+            if f.get("vcodec") == "none" and f.get("acodec") not in (None, "none")
+        ]
+
+        if audio_formats:
+            # Pega o de maior bitrate
+            best_audio = max(
+                audio_formats,
+                key=lambda f: f.get("abr", 0) or 0,
+            )
+            url = best_audio.get("url", "")
+            if url:
+                return url
+
+        # Priority 2: usa a URL direta do info
+        url = info.get("url", "")
+        if url:
+            return url
+
+        # Priority 3: tenta o primeiro formato disponível com URL
+        for f in formats:
+            url = f.get("url", "")
+            if url:
+                return url
+
+        # Priority 4: tenta extrair de adaptive_fmts (formato antigo)
+        adaptive_fmts = info.get("adaptive_fmts", [])
+        if adaptive_fmts:
+            for f in adaptive_fmts:
+                url = f.get("url", "")
+                if url:
+                    return url
+
+        return ""
 
     def get_video_info(self, video_url: str) -> Dict:
-        """Obtém informações detalhadas do vídeo."""
-        try:
-            info = self._extract_with_retry(video_url, download=False)
+        """
+        Obtém informações detalhadas do vídeo com cache.
 
+        Args:
+            video_url: URL do vídeo
+
+        Returns:
+            Dicionário com informações detalhadas
+        """
+        # Verifica cache
+        cache_key = compute_cache_key("info", video_url)
+        cached = self._info_cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            info = self._extract_with_retry(video_url, download=False, use_cache=True)
+
+            # Extrai formatos de áudio de forma segura
             audio_formats = []
             for f in info.get("formats", []):
-                if f.get("vcodec") == "none" and f.get("acodec") != "none":
+                if f.get("vcodec") == "none" and f.get("acodec") not in (None, "none"):
                     audio_formats.append({
                         "format_id": f.get("format_id"),
                         "ext": f.get("ext"),
@@ -526,66 +1051,157 @@ class YouTubeScraper:
                         "abr": f.get("abr"),
                     })
 
-            return {
+            # Extrai thumbnail de forma robusta
+            thumbnail = info.get("thumbnail", "")
+            if not thumbnail and info.get("thumbnails"):
+                thumbnail = info["thumbnails"][0].get("url", "")
+
+            # Extrai channel/uploader
+            channel = (
+                info.get("channel") or
+                info.get("uploader") or
+                "Desconhecido"
+            )
+            if isinstance(channel, dict):
+                channel = channel.get("name", "Desconhecido")
+
+            result = {
                 "id": info.get("id", ""),
                 "title": info.get("title", "Sem título"),
-                "channel": info.get("channel", info.get("uploader", "Desconhecido")),
+                "channel": str(channel),
                 "duration": self._format_duration(info.get("duration", 0)),
                 "duration_seconds": info.get("duration", 0),
                 "view_count": info.get("view_count", 0),
                 "like_count": info.get("like_count", 0),
-                "thumbnail": info.get("thumbnail", ""),
+                "thumbnail": thumbnail,
                 "audio_formats": audio_formats,
                 "description": (info.get("description") or "")[:300],
-                "is_playlist": info.get("extractor", "").lower().find("playlist") >= 0,
+                "is_playlist": "playlist" in (info.get("extractor", "") or "").lower(),
                 "url": video_url,
+                "categories": info.get("categories", []),
+                "tags": info.get("tags", [])[:10],  # Limita a 10 tags
+                "upload_date": info.get("upload_date", ""),
             }
+
+            self._info_cache.set(cache_key, result)
+            return result
+
         except Exception as e:
             raise Exception(f"Erro ao obter info: {str(e)}")
 
     def list_downloaded(self) -> List[Dict]:
-        """Lista todos os MP3s baixados."""
+        """Lista todos os MP3s baixados com informações detalhadas."""
         downloaded = []
         for f in Path(self.download_dir).glob("*.mp3"):
-            stats = os.stat(f)
-            downloaded.append({
-                "filename": f.name,
-                "path": str(f),
-                "size_mb": round(stats.st_size / (1024 * 1024), 2),
-                "modified": stats.st_mtime,
-            })
+            try:
+                stats = os.stat(f)
+                downloaded.append({
+                    "filename": f.name,
+                    "path": str(f),
+                    "size_mb": round(stats.st_size / (1024 * 1024), 2),
+                    "modified": stats.st_mtime,
+                    "modified_str": datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                })
+            except OSError:
+                continue
         return sorted(downloaded, key=lambda x: x["modified"], reverse=True)
 
-    def download_playlist_audios(self, playlist_url: str) -> List[str]:
+    def download_playlist_audios(self, playlist_url: str,
+                                  max_concurrent: int = 3,
+                                  progress_callback=None) -> List[str]:
         """
         Baixa todas as músicas de uma playlist como arquivos MP3 separados.
+        Usa download concorrente para acelerar o processo.
 
         Args:
             playlist_url: URL da playlist
+            max_concurrent: Número máximo de downloads simultâneos
+            progress_callback: Função de callback para progresso (recebe dict com status)
 
         Returns:
             Lista de caminhos dos arquivos baixados
         """
         tracks = self.get_playlist_tracks(playlist_url)
         downloaded_files = []
+        failed_tracks = []
 
-        for track in tracks:
-            print(f"  ⬇ {track['title']}...")
+        if not tracks:
+            logger.warning("Nenhuma faixa encontrada na playlist")
+            return downloaded_files
+
+        logger.info(f"Baixando {len(tracks)} músicas da playlist "
+                     f"(máx {max_concurrent} concorrentes)")
+
+        def download_single(track: Dict) -> Tuple[Optional[str], Dict, Optional[str]]:
+            """Baixa uma única faixa e retorna o resultado."""
             try:
-                filepath = self.download_audio(
-                    track["url"],
-                    filename=f"{track['channel']} - {track['title']}"[:100]
-                )
-                downloaded_files.append(filepath)
-                print(f"    ✅ OK")
+                if progress_callback:
+                    progress_callback({
+                        "status": "downloading",
+                        "track": track["title"],
+                        "index": tracks.index(track) + 1,
+                        "total": len(tracks),
+                    })
+
+                filename = f"{track['channel']} - {track['title']}"[:100]
+                filepath = self.download_audio(track["url"], filename=filename)
+
+                if progress_callback:
+                    progress_callback({
+                        "status": "completed",
+                        "track": track["title"],
+                        "index": tracks.index(track) + 1,
+                        "total": len(tracks),
+                        "filepath": filepath,
+                    })
+
+                return filepath, track, None
+
             except Exception as e:
-                print(f"    ❌ {e}")
+                error_msg = str(e)
+                logger.error(f"Falha ao baixar '{track['title']}': {error_msg}")
+                if progress_callback:
+                    progress_callback({
+                        "status": "failed",
+                        "track": track["title"],
+                        "index": tracks.index(track) + 1,
+                        "total": len(tracks),
+                        "error": error_msg,
+                    })
+                return None, track, error_msg
+
+        # Download concorrente com ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            futures = {executor.submit(download_single, track): track for track in tracks}
+
+            for future in as_completed(futures):
+                try:
+                    filepath, track, error = future.result()
+                    if filepath:
+                        downloaded_files.append(filepath)
+                        print(f"    ✅ {track['title']}")
+                    else:
+                        failed_tracks.append((track, error))
+                        print(f"    ❌ {track['title']}: {error}")
+                except Exception as e:
+                    track = futures[future]
+                    failed_tracks.append((track, str(e)))
+                    print(f"    ❌ {track['title']}: {e}")
+
+        # Relatório final
+        success_count = len(downloaded_files)
+        fail_count = len(failed_tracks)
+        print(f"\n  📊 Playlist concluída: {success_count} baixadas", end="")
+        if fail_count > 0:
+            print(f", {fail_count} falhas")
+        else:
+            print(" com sucesso!")
 
         return downloaded_files
 
     @staticmethod
     def _format_duration(seconds) -> str:
-        """Converte segundos para HH:MM:SS."""
+        """Converte segundos para HH:MM:SS de forma robusta."""
         try:
             seconds = int(float(seconds or 0))
         except (ValueError, TypeError):
@@ -598,6 +1214,12 @@ class YouTubeScraper:
         if hours > 0:
             return f"{hours}:{minutes:02d}:{secs:02d}"
         return f"{minutes}:{secs:02d}"
+
+    def clear_cache(self):
+        """Limpa todos os caches."""
+        self._search_cache.clear()
+        self._info_cache.clear()
+        logger.info("Cache limpo")
 
     def __del__(self):
         """Limpa arquivo temporário de cookies se existir."""

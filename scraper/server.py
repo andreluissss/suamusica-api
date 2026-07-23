@@ -159,8 +159,32 @@ def list_downloaded():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/cache/clear", methods=["POST"])
+def clear_cache():
+    """Limpa os caches internos do scraper."""
+    try:
+        scraper.clear_cache()
+        return jsonify({"status": "ok", "message": "Cache limpo com sucesso"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    """Endpoint de saúde do serviço."""
+    return jsonify({
+        "status": "ok",
+        "version": "2.1.0",
+        "download_dir": scraper.download_dir,
+        "auth_method": (
+            "cookies" if ("cookiesfrombrowser" in scraper._common_opts or "cookiefile" in scraper._common_opts)
+            else "anonymous"
+        ),
+    })
+
+
 def run_server(host="0.0.0.0", port=5000, debug=False):
-    print(f"\n🎵 YouTube Music Scraper API v2")
+    print(f"\n🎵 YouTube Music Scraper API v2.1")
     print(f"   Rodando em: http://{host}:{port}")
     print(f"   Downloads: {scraper.download_dir}")
     print(f"\n📌 Exemplos:")
@@ -168,6 +192,7 @@ def run_server(host="0.0.0.0", port=5000, debug=False):
     print(f"   Playlist:  http://{host}:{port}/api/playlist?url=PLAYLIST_URL")
     print(f"   Stream:    http://{host}:{port}/api/stream?url=YOUTUBE_URL")
     print(f"   Download:  http://{host}:{port}/api/download?url=YOUTUBE_URL")
+    print(f"   Health:    http://{host}:{port}/api/health")
     app.run(host=host, port=port, debug=debug)
 
 

@@ -174,7 +174,20 @@ def run_cli():
                     continue
                 try:
                     print(f"\n  ⬇⬇ Baixando playlist: {item['title']}...")
-                    files = scraper.download_playlist_audios(item["url"])
+                    # Usa progress_callback para feedback visual
+                    def progress_callback(status):
+                        if status["status"] == "downloading":
+                            print(f"  ⬇ [{status['index']}/{status['total']}] {status['track']}...")
+                        elif status["status"] == "completed":
+                            print(f"  ✅ [{status['index']}/{status['total']}] {status['track']}")
+                        elif status["status"] == "failed":
+                            print(f"  ❌ [{status['index']}/{status['total']}] {status['track']}: {status['error']}")
+
+                    files = scraper.download_playlist_audios(
+                        item["url"],
+                        max_concurrent=3,
+                        progress_callback=progress_callback
+                    )
                     print(f"\n  ✅ Playlist baixada! {len(files)} música(s) salva(s).")
                 except Exception as e:
                     print(f"  ❌ Erro: {e}")
