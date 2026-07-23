@@ -3,6 +3,11 @@ set -e
 
 echo "=== Entrypoint iniciado ==="
 
+# Atualiza yt-dlp para a versão mais recente
+echo "✓ Verificando versão do yt-dlp..."
+pip install --upgrade yt-dlp 2>&1 | tail -1
+echo ""
+
 # Converter cookies para formato Netscape usando Python
 convert_cookies() {
     python3 << 'PYEOF'
@@ -91,26 +96,28 @@ PYEOF
     return $?
 }
 
-# Priority 1: YOUTUBE_COOKIES_BASE64
-if [ -n "$YOUTUBE_COOKIES_BASE64" ]; then
-    echo "✓ YOUTUBE_COOKIES_BASE64 encontrada, decodificando..."
-    echo "$YOUTUBE_COOKIES_BASE64" | base64 -d > /app/scraper/cookies.txt
-    if [ -f /app/scraper/cookies.txt ] && [ -s /app/scraper/cookies.txt ]; then
-        export YOUTUBE_COOKIES_FILE=/app/scraper/cookies.txt
-        echo "✓ Cookies decodificados ($(wc -l < /app/scraper/cookies.txt) linhas)"
-        convert_cookies
-    else
-        echo "✗ Falha ao decodificar YOUTUBE_COOKIES_BASE64"
-    fi
-fi
-
-# Priority 2: Render Secret File
+# Priority 1: Render Secret File (mais recente, atualizado manualmente)
 if [ -f /etc/secrets/cookies.txt ]; then
     echo "✓ Render Secret File encontrado em /etc/secrets/cookies.txt"
     cp /etc/secrets/cookies.txt /app/scraper/cookies.txt
     export YOUTUBE_COOKIES_FILE=/app/scraper/cookies.txt
-    echo "✓ Cookies copiado ($(wc -l < /app/scraper/cookies.txt) linhas)"
+    echo "✓ Cookies copiado do Secret File ($(wc -l < /app/scraper/cookies.txt) linhas)"
     convert_cookies
+    COOKIE_SOURCE="Secret File"
+fi
+
+# Priority 2: YOUTUBE_COOKIES_BASE64 (fallback, se Secret File não existir)
+if [ ! -f /app/scraper/cookies.txt ] && [ -n "$YOUTUBE_COOKIES_BASE64" ]; then
+    echo "✓ YOUTUBE_COOKIES_BASE64 encontrada, decodificando..."
+    echo "$YOUTUBE_COOKIES_BASE64" | base64 -d > /app/scraper/cookies.txt
+    if [ -f /app/scraper/cookies.txt ] && [ -s /app/scraper/cookies.txt ]; then
+        export YOUTUBE_COOKIES_FILE=/app/scraper/cookies.txt
+        echo "✓ Cookies decodificados da base64 ($(wc -l < /app/scraper/cookies.txt) linhas)"
+        convert_cookies
+        COOKIE_SOURCE="BASE64"
+    else
+        echo "✗ Falha ao decodificar YOUTUBE_COOKIES_BASE64"
+    fi
 fi
 
 # Verifica se o arquivo existe
