@@ -25,3 +25,7 @@ ENV YOUTUBE_COOKIES_FILE=/app/scraper/cookies.txt
 
 # Comando para iniciar o servidor via entrypoint
 CMD ["/app/entrypoint.sh"]
+
+# Build timestamp para forçar rebuild
+ARG BUILD_DATE
+ENV BUILD_DATE=${BUILD_DATE}
