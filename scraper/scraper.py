@@ -43,7 +43,7 @@ class YouTubeScraper:
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-        # Configuração base (sem extractor_args - será definido por estratégia)
+        # Configuração base
         self._common_opts = {
             "quiet": True,
             "no_warnings": True,
@@ -52,26 +52,25 @@ class YouTubeScraper:
             "extractor_args": {
                 "youtube": {
                     "include_dash_manifest": False,
+                    "player_client": ["android", "ios"],  # Padrão: clientes mobile
                 }
             },
+            "extractor_retries": 3,
+            "file_access_retries": 3,
         }
 
         auth_source = None
 
-        # Priority 1: cookies from browser env var (recommended)
+        # Tenta usar cookies se disponíveis
         if cookies_browser:
             browser_name = cookies_browser.strip().lower()
             self._common_opts["cookiesfrombrowser"] = browser_name
             auth_source = f"browser ({browser_name})"
             logger.info(f"Usando cookies do navegador: {browser_name}")
-
-        # Priority 2: cookies file env var
         elif cookies_file and os.path.exists(cookies_file):
             self._common_opts["cookiefile"] = cookies_file
             auth_source = f"cookies file ({cookies_file})"
             logger.info(f"Usando arquivo de cookies: {cookies_file}")
-
-        # Priority 3: auto-detect browser cookies
         else:
             detected = self._detect_browser_cookies()
             if detected:
@@ -79,11 +78,8 @@ class YouTubeScraper:
                 logger.info(f"Cookies detectados automaticamente do navegador: {detected}")
 
         if not auth_source:
-            auth_source = "dynamic client strategy"
-            logger.info(
-                "Nenhum cookie encontrado. Usando estratégia dinâmica de clientes. "
-                "Se falhar, configure YOUTUBE_COOKIES_FROM_BROWSER=chrome"
-            )
+            auth_source = "client android/ios (sem cookies)"
+            logger.info("Usando client android/ios sem cookies. Se falhar, configure YOUTUBE_COOKIES_FILE")
 
         logger.info(f"Método de autenticação: {auth_source}")
 
