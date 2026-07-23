@@ -11,57 +11,82 @@ import re, sys
 with open('/app/scraper/cookies.txt', 'r') as f:
     content = f.read()
 
-# Se já começa com Netscape, está ok
+# Se já começa com Netscape, verifica se está bem formatado
 if content.startswith('# Netscape'):
-    print('  ✓ Já está no formato Netscape')
-    sys.exit(0)
+    # Verifica se há pelo menos uma linha com 7 campos tab-separados
+    lines = content.strip().split('\n')
+    valid_lines = 0
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split('\t')
+        if len(parts) == 7:
+            valid_lines += 1
+    if valid_lines > 0:
+        print(f'  ✓ Já está no formato Netscape ({valid_lines} cookies válidos)')
+        sys.exit(0)
+    else:
+        print('  ⚠ Arquivo começa com Netscape mas sem cookies válidos, tentando reparar...')
 
-# Tentar converter formato JSON (comum em extensões Export All Cookies)
-if content.strip().startswith('{') or content.strip().startswith('['):
-    import json
-    try:
-        data = json.loads(content)
-        if isinstance(data, list):
-            items = data
-        elif isinstance(data, dict):
-            items = [data]
-        else:
-            items = []
-    except:
-        items = []
-    with open('/app/scraper/cookies.txt', 'w') as f:
-        f.write('# Netscape HTTP Cookie File\n')
-        for c in items:
-            domain = c.get('domain', c.get('Domain', '.youtube.com'))
-            flag = 'TRUE' if domain.startswith('.') else 'FALSE'
-            path = c.get('path', c.get('Path', '/'))
-            secure = 'TRUE' if c.get('secure', c.get('Secure', False)) else 'FALSE'
-            exp = str(int(float(c.get('expirationDate', c.get('Expires', '2147483647')))))
-            name = c.get('name', c.get('Name', ''))
-            value = c.get('value', c.get('Value', ''))
-            if name and value:
+# Reescrever o arquivo em formato Netscape estrito
+# Remove linhas que não são cookies válidos
+with open('/app/scraper/cookies.txt', 'r') as f:
+    raw_lines = f.readlines()
+
+with open('/app/scraper/cookies.txt', 'w') as f:
+    f.write('# Netscape HTTP Cookie File\n')
+    f.write('# https://curl.haxx.se/rfc/cookie_spec.html\n')
+    f.write('# This is a generated file! Do not edit.\n')
+    f.write('#\n')
+    
+    count = 0
+    for line in raw_lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        
+        # Tenta parsear como Netscape (tab-separated)
+        parts = line.split('\t')
+        if len(parts) == 7:
+            domain, flag, path, secure, exp, name, value = parts
+            # Valida campos básicos
+            if domain and name and value:
                 f.write(f'{domain}\t{flag}\t{path}\t{secure}\t{exp}\t{name}\t{value}\n')
-    print('  ✓ Convertido formato JSON para Netscape')
-    sys.exit(0)
-
-# Tentar converter formato linhas simples (name=value)
-if '=' in content and ('youtube' in content.lower() or '.youtube' in content):
-    with open('/app/scraper/cookies.txt', 'w') as f:
-        f.write('# Netscape HTTP Cookie File\n')
-        for line in content.strip().split('\n'):
-            line = line.strip()
-            if not line or line.startswith('#'):
+                count += 1
                 continue
-            if '=' in line:
-                parts = line.split('=', 1)
-                name = parts[0].strip()
-                value = parts[1].strip().rstrip(';')
-                if name and value:
-                    f.write(f'.youtube.com\tTRUE\t/\tFALSE\t2147483647\t{name}\t{value}\n')
-    print('  ✓ Convertido formato name=value para Netscape')
-    sys.exit(0)
+        
+        # Tenta parsear como JSON (se começar com { ou [)
+        if line.startswith('{') or line.startswith('['):
+            import json
+            try:
+                data = json.loads(line)
+                items = data if isinstance(data, list) else [data]
+                for c in items:
+                    domain = c.get('domain', c.get('Domain', '.youtube.com'))
+                    flag = 'TRUE' if domain.startswith('.') else 'FALSE'
+                    path = c.get('path', c.get('Path', '/'))
+                    secure = 'TRUE' if c.get('secure', c.get('Secure', False)) else 'FALSE'
+                    exp = str(int(float(c.get('expirationDate', c.get('Expires', '2147483647')))))
+                    name = c.get('name', c.get('Name', ''))
+                    value = c.get('value', c.get('Value', ''))
+                    if name and value:
+                        f.write(f'{domain}\t{flag}\t{path}\t{secure}\t{exp}\t{name}\t{value}\n')
+                        count += 1
+            except:
+                pass
+            continue
+        
+        # Tenta parsear como name=value (formato simples)
+        if '=' in line:
+            parts = line.split('=', 1)
+            name = parts[0].strip()
+            value = parts[1].strip().rstrip(';')
+            if name and value:
+                f.write(f'.youtube.com\tTRUE\t/\tFALSE\t2147483647\t{name}\t{value}\n')
+                count += 1
 
-print('  ⚠ Formato não reconhecido, tentando usar como está')
+print(f'  ✓ Cookies reescritos em formato Netscape ({count} cookies)')
 PYEOF
     return $?
 }
