@@ -7,6 +7,8 @@ Usa yt-dlp (não requer API key).
 import os
 import re
 import logging
+import base64
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
@@ -25,16 +27,19 @@ class YouTubeScraper:
             os.path.expanduser("~"), "YouTubeMusic"
         )
         os.makedirs(self.download_dir, exist_ok=True)
+        self._temp_cookie_file = None
 
         # Configurações para bypass do bloqueio do YouTube
         # Ordem de precedência:
         # 1. YOUTUBE_COOKIES_FROM_BROWSER (recomendado) - extrai cookies de um navegador
         #    Valores: chrome, firefox, edge, brave, opera, chromium, safari, vivaldi
         # 2. YOUTUBE_COOKIES_FILE - caminho para um arquivo de cookies.txt
-        # 3. Detecção automática de cookies de navegadores instalados
-        # 4. Múltiplas estratégias de cliente (android, ios, web) com retry
+        # 3. YOUTUBE_COOKIES_BASE64 - cookies em formato base64 (útil para Render/cloud)
+        # 4. Detecção automática de cookies de navegadores instalados
+        # 5. Múltiplas estratégias de cliente (android, ios, web) com retry
         cookies_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER", "")
         cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
+        cookies_base64 = os.environ.get("YOUTUBE_COOKIES_BASE64", "")
 
         # Headers realistas para evitar detecção
         self._http_headers = {
@@ -71,6 +76,19 @@ class YouTubeScraper:
             self._common_opts["cookiefile"] = cookies_file
             auth_source = f"cookies file ({cookies_file})"
             logger.info(f"Usando arquivo de cookies: {cookies_file}")
+        elif cookies_base64:
+            # Decodifica cookies base64 e salva em arquivo temporário
+            try:
+                cookies_content = base64.b64decode(cookies_base64).decode('utf-8')
+                temp_cookie_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                temp_cookie_file.write(cookies_content)
+                temp_cookie_file.close()
+                self._common_opts["cookiefile"] = temp_cookie_file.name
+                self._temp_cookie_file = temp_cookie_file.name  # Guarda referência para limpeza
+                auth_source = "cookies base64 (environment variable)"
+                logger.info(f"Usando cookies base64 da variável de ambiente")
+            except Exception as e:
+                logger.warning(f"Erro ao decodificar cookies base64: {e}")
         else:
             detected = self._detect_browser_cookies()
             if detected:
@@ -124,6 +142,29 @@ class YouTubeScraper:
                         "player_client": ["web_embbed"],
                         "include_dash_manifest": False,
                     }
+                },
+            },
+            # Estratégia 5: web creator - cliente para criadores de conteúdo
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["web_creator"],
+                        "include_dash_manifest": False,
+                    }
+                },
+            },
+            # Estratégia 6: mweb - mobile web
+            {
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["mweb"],
+                        "include_dash_manifest": False,
+                    }
+                },
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
                 },
             },
         ]
@@ -532,6 +573,14 @@ class YouTubeScraper:
         if hours > 0:
             return f"{hours}:{minutes:02d}:{secs:02d}"
         return f"{minutes}:{secs:02d}"
+
+    def __del__(self):
+        """Limpa arquivo temporário de cookies se existir."""
+        if self._temp_cookie_file and os.path.exists(self._temp_cookie_file):
+            try:
+                os.unlink(self._temp_cookie_file)
+            except Exception:
+                pass
 
     @staticmethod
     def format_results(results: List[Dict], show_index: bool = True) -> str:
