@@ -394,11 +394,20 @@ class YouTubeScraper:
             Tupla (url_stream, titulo)
         """
         try:
-            info = self._extract_with_retry(
-                video_url,
-                download=False,
-                opts_override={"format": "bestaudio/best"},
-            )
+            # Tenta primeiro com formato mais flexível
+            for fmt in ["bestaudio[ext=m4a]/bestaudio", "bestaudio/best", "bestaudio*", "worstaudio/worst"]:
+                try:
+                    info = self._extract_with_retry(
+                        video_url,
+                        download=False,
+                        opts_override={"format": fmt},
+                    )
+                    break
+                except Exception:
+                    continue
+            else:
+                raise Exception("Nenhum formato de áudio disponível para este vídeo")
+
             audio_url = info.get("url", "")
             title = info.get("title", "Sem título")
 
