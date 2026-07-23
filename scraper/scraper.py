@@ -579,7 +579,7 @@ class YouTubeScraper:
 
         except Exception as e:
             last_error = e
-            logger.warning(f"Busca com opções básicas falhou: {str(e)[:100]}")
+            logger.debug(f"Busca com opções básicas falhou, tentando fallback: {str(e)[:100]}")
 
             # Fallback: tenta sem http_headers extras
             try:
@@ -594,6 +594,7 @@ class YouTubeScraper:
                     info = ydl.extract_info(search_query, download=False)
                 if info and "entries" in info:
                     results = self._parse_search_results(info["entries"])
+                    logger.debug(f"Busca fallback funcionou para '{query}'")
             except Exception as e2:
                 last_error = e2
                 logger.warning(f"Busca fallback também falhou: {str(e2)[:100]}")
