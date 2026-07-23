@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Entrypoint iniciado v2.2 ==="
+echo "=== Entrypoint iniciado v2.3 - Audio format fix ==="
 
 # Atualiza yt-dlp para a versão mais recente
 echo "✓ Verificando versão do yt-dlp..."
