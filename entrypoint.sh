@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Entrypoint iniciado ==="
+echo "=== Entrypoint iniciado v2.2 ==="
 
 # Atualiza yt-dlp para a versão mais recente
 echo "✓ Verificando versão do yt-dlp..."
