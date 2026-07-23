@@ -1,9 +1,24 @@
-# Configuração de Cookies para YouTube Scraper
+# Configuração de Cookies e Proxy para YouTube Scraper
 
 ## Problema
-O YouTube bloqueia requisições de servidores cloud (como Render) com erro "Sign in to confirm you're not a bot". Para contornar isso, é necessário fornecer cookies autenticados de uma conta do YouTube.
+O YouTube bloqueia agressivamente requisições de servidores cloud (como Render) com erro "Sign in to confirm you're not a bot". 
 
-## Solução
+## Soluções (em ordem de eficácia)
+
+### 1. Proxy HTTP/SOCKS (Recomendado para Cloud) ✅
+Mascarar o IP do servidor cloud é a solução mais eficaz.
+
+**Configurar no Render:**
+- **Key**: `YOUTUBE_PROXY`
+- **Value**: URL do proxy (ex: `http://user:pass@proxy-server:port` ou `socks5://user:pass@proxy-server:port`)
+
+**Proxies recomendados:**
+- ProxyMesh
+- Bright Data
+- Smartproxy
+- Ou qualquer proxy residencial/rotativo
+
+### 2. Cookies Autenticados
 Configure cookies autenticados via variável de ambiente no Render.
 
 ## Passo 1: Exportar Cookies do Navegador

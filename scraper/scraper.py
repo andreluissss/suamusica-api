@@ -29,14 +29,19 @@ class YouTubeScraper:
         os.makedirs(self.download_dir, exist_ok=True)
         self._temp_cookie_file = None
 
+        # Verificar se está rodando em ambiente cloud
+        self._is_cloud_env = self._detect_cloud_environment()
+
         # Configurações para bypass do bloqueio do YouTube
         # Ordem de precedência:
-        # 1. YOUTUBE_COOKIES_FROM_BROWSER (recomendado) - extrai cookies de um navegador
+        # 1. YOUTUBE_PROXY - proxy HTTP/SOCKS para mascarar IP (recomendado para cloud)
+        # 2. YOUTUBE_COOKIES_FROM_BROWSER - extrai cookies de um navegador
         #    Valores: chrome, firefox, edge, brave, opera, chromium, safari, vivaldi
-        # 2. YOUTUBE_COOKIES_FILE - caminho para um arquivo de cookies.txt
-        # 3. YOUTUBE_COOKIES_BASE64 - cookies em formato base64 (útil para Render/cloud)
-        # 4. Detecção automática de cookies de navegadores instalados
-        # 5. Múltiplas estratégias de cliente (android, ios, web) com retry
+        # 3. YOUTUBE_COOKIES_FILE - caminho para um arquivo de cookies.txt
+        # 4. YOUTUBE_COOKIES_BASE64 - cookies em formato base64 (útil para Render/cloud)
+        # 5. Detecção automática de cookies de navegadores instalados
+        # 6. Múltiplas estratégias de cliente (android, ios, web) com retry
+        proxy_url = os.environ.get("YOUTUBE_PROXY", "")
         cookies_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER", "")
         cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
         cookies_base64 = os.environ.get("YOUTUBE_COOKIES_BASE64", "")
@@ -63,6 +68,11 @@ class YouTubeScraper:
             "extractor_retries": 3,
             "file_access_retries": 3,
         }
+
+        # Configurar proxy se fornecido
+        if proxy_url:
+            self._common_opts["proxy"] = proxy_url
+            logger.info(f"Usando proxy: {proxy_url}")
 
         auth_source = None
 
@@ -181,6 +191,17 @@ class YouTubeScraper:
             ],
             "outtmpl": os.path.join(self.download_dir, "%(title)s.%(ext)s"),
         }
+
+    def _detect_cloud_environment(self) -> bool:
+        """Detecta se está rodando em ambiente cloud."""
+        indicators = [
+            os.path.exists("/proc/self/cgroup"),
+            os.path.exists("/.dockerenv"),
+            os.environ.get("RENDER", "") != "",
+            os.environ.get("DYNO", "") != "",
+            os.environ.get("HEROKU", "") != "",
+        ]
+        return any(indicators)
 
     def _detect_browser_cookies(self) -> Optional[str]:
         """
