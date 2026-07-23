@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: suamusica-api
+    env: docker
+    plan: free
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    buildCommand: docker build --build-arg BUILD_DATE=$(date +%s) -t suamusica-api .
+    startCommand: /app/entrypoint.sh
+    envVars:
+      - key: YOUTUBE_PROXY
+        value: http://64.112.184.210:3128
