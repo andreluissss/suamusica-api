@@ -64,6 +64,7 @@ class YouTubeScraper:
     """
     Classe principal para scraping de áudio do YouTube com múltiplas
     estratégias de fallback, rate limiting e cache inteligente.
+    Versão 2.1 - Melhorias de robustez para endpoints /api/download e /api/info
     """
 
     # Delay mínimo entre requisições (em segundos)
