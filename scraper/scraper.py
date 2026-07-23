@@ -888,11 +888,11 @@ class YouTubeScraper:
         Returns:
             Tupla (url_stream, titulo)
         """
-        # Verifica cache
-        cache_key = compute_cache_key("stream", video_url)
-        cached = self._info_cache.get(cache_key)
-        if cached:
-            return cached
+        # Desabilita cache temporariamente para garantir URLs frescas
+        # cache_key = compute_cache_key("stream", video_url)
+        # cached = self._info_cache.get(cache_key)
+        # if cached:
+        #     return cached
 
         self._apply_rate_limit()
         self._rotate_user_agent()
