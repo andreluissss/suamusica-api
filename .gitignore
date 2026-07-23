@@ -25,3 +25,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# YouTube cookies (sensitive data - use Render Secret Files instead)
+cookies.txt
+scraper/cookies.txt
