@@ -816,7 +816,7 @@ class YouTubeScraper:
 
     def download_audio(self, video_url: str, filename: Optional[str] = None) -> str:
         """
-        Baixa o áudio como MP3 com retry e verificação de integridade.
+        Baixa o áudio como MP3 usando stream URL + download direto (mais robusto).
 
         Args:
             video_url: URL do vídeo
@@ -825,46 +825,43 @@ class YouTubeScraper:
         Returns:
             Caminho do arquivo MP3
         """
-        opts_override = dict(self.ydl_opts)
-        # Remove chaves que conflitam com _common_opts
-        for key in ("quiet", "no_warnings", "extract_flat", "http_headers",
-                     "extractor_args", "cookiesfrombrowser", "cookiefile",
-                     "socket_timeout", "extractor_retries", "file_access_retries",
-                     "fragment_retries", "retries", "skip_unavailable_fragments"):
-            opts_override.pop(key, None)
-
-        if filename:
-            safe_name = re.sub(r'[<>:"/\\|?*]', '_', filename)[:100]
-            opts_override["outtmpl"] = os.path.join(self.download_dir, f"{safe_name}.%(ext)s")
-
         try:
-            info = self._extract_with_retry(video_url, download=True, opts_override=opts_override)
-            title = info.get("title", "audio_downloaded")
+            # Primeiro obtém a URL de stream (que funciona)
+            stream_url, title = self.get_audio_stream_url(video_url)
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)[:100]
+            
+            if filename:
+                safe_name = re.sub(r'[<>:"/\\|?*]', '_', filename)[:100]
+                output_path = os.path.join(self.download_dir, f"{safe_name}.mp3")
+            else:
+                output_path = os.path.join(self.download_dir, f"{safe_title}.mp3")
 
-            expected_file = os.path.join(
-                self.download_dir,
-                f"{filename or safe_title}.mp3",
-            )
+            # Download direto da stream URL com requests
+            import requests
+            headers = {
+                "User-Agent": random.choice(self._user_agents),
+                "Accept": "*/*",
+            }
+            
+            # Usa proxy se configurado
+            proxies = {}
+            if "proxy" in self._common_opts:
+                proxies = {"http": self._common_opts["proxy"], "https": self._common_opts["proxy"]}
 
-            # Verifica se o arquivo existe
-            if os.path.exists(expected_file) and os.path.getsize(expected_file) > 0:
-                return expected_file
+            response = requests.get(stream_url, headers=headers, proxies=proxies, stream=True, timeout=60)
+            response.raise_for_status()
 
-            # Se não encontrou, busca o MP3 mais recente
-            mp3_files = sorted(
-                Path(self.download_dir).glob("*.mp3"),
-                key=os.path.getmtime,
-                reverse=True,
-            )
-            if mp3_files:
-                # Verifica se o mais recente foi modificado nos últimos 30 segundos
-                latest = mp3_files[0]
-                if time.time() - os.path.getmtime(latest) < 30:
-                    if os.path.getsize(latest) > 1024:  # Maior que 1KB
-                        return str(latest)
+            # Salva o arquivo
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
 
-            return expected_file
+            # Verifica se o arquivo foi criado
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 1024:
+                return output_path
+            else:
+                raise Exception("Arquivo não foi criado ou está vazio")
 
         except Exception as e:
             raise Exception(f"Erro ao baixar áudio: {str(e)}")
@@ -1023,7 +1020,7 @@ class YouTubeScraper:
 
     def get_video_info(self, video_url: str) -> Dict:
         """
-        Obtém informações detalhadas do vídeo com cache.
+        Obtém informações detalhadas do vídeo com cache e retry robusto.
 
         Args:
             video_url: URL do vídeo
@@ -1036,6 +1033,9 @@ class YouTubeScraper:
         cached = self._info_cache.get(cache_key)
         if cached:
             return cached
+
+        self._apply_rate_limit()
+        self._rotate_user_agent()
 
         try:
             info = self._extract_with_retry(video_url, download=False, use_cache=True)
@@ -1087,7 +1087,44 @@ class YouTubeScraper:
             return result
 
         except Exception as e:
-            raise Exception(f"Erro ao obter info: {str(e)}")
+            # Fallback: tenta com opções mínimas se falhar
+            try:
+                logger.warning(f"get_video_info falhou, tentando fallback: {str(e)[:100]}")
+                fallback_opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "extract_flat": False,
+                    "socket_timeout": self.NETWORK_TIMEOUT,
+                }
+                # Mantém proxy e cookies
+                if "proxy" in self._common_opts:
+                    fallback_opts["proxy"] = self._common_opts["proxy"]
+                if "cookiesfrombrowser" in self._common_opts:
+                    fallback_opts["cookiesfrombrowser"] = self._common_opts["cookiesfrombrowser"]
+                if "cookiefile" in self._common_opts:
+                    fallback_opts["cookiefile"] = self._common_opts["cookiefile"]
+
+                with YoutubeDL(fallback_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+
+                # Retorna info básica mesmo com fallback
+                return {
+                    "id": info.get("id", ""),
+                    "title": info.get("title", "Sem título"),
+                    "channel": str(info.get("channel") or info.get("uploader") or "Desconhecido"),
+                    "duration": self._format_duration(info.get("duration", 0)),
+                    "duration_seconds": info.get("duration", 0),
+                    "thumbnail": info.get("thumbnail", ""),
+                    "audio_formats": [],
+                    "description": "",
+                    "is_playlist": False,
+                    "url": video_url,
+                    "categories": [],
+                    "tags": [],
+                    "upload_date": info.get("upload_date", ""),
+                }
+            except Exception as e2:
+                raise Exception(f"Erro ao obter info (fallback também falhou): {str(e2)[:100]}")
 
     def list_downloaded(self) -> List[Dict]:
         """Lista todos os MP3s baixados com informações detalhadas."""
