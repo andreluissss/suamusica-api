@@ -816,27 +816,40 @@ class YouTubeScraper:
             raise Exception(f"Erro ao obter faixas da playlist: {str(last_error)}")
         return tracks
 
-    def download_audio(self, video_url: str, filename: Optional[str] = None) -> str:
+    def download_audio(self, video_url: str, filename: Optional[str] = None, format: str = "mp3") -> str:
         """
-        Baixa o áudio como MP3 usando stream URL + download direto (mais robusto).
+        Baixa o áudio usando stream URL + download direto (mais robusto).
 
         Args:
             video_url: URL do vídeo
             filename: Nome personalizado (opcional)
+            format: Formato do arquivo - "mp3" (padrão) ou "original" (webm/opus ou mp4/aac)
 
         Returns:
-            Caminho do arquivo MP3
+            Caminho do arquivo de áudio
         """
         try:
             # Primeiro obtém a URL de stream (que funciona)
             stream_url, title = self.get_audio_stream_url(video_url)
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)[:100]
-            
+
+            # Determina extensão baseada no formato
+            if format == "original":
+                # Extrai extensão da stream URL (webm ou mp4)
+                if ".webm" in stream_url.lower():
+                    ext = "webm"
+                elif ".m4a" in stream_url.lower():
+                    ext = "m4a"
+                else:
+                    ext = "webm"  # padrão do YouTube
+            else:
+                ext = "mp3"  # padrão
+
             if filename:
                 safe_name = re.sub(r'[<>:"/\\|?*]', '_', filename)[:100]
-                output_path = os.path.join(self.download_dir, f"{safe_name}.mp3")
+                output_path = os.path.join(self.download_dir, f"{safe_name}.{ext}")
             else:
-                output_path = os.path.join(self.download_dir, f"{safe_title}.mp3")
+                output_path = os.path.join(self.download_dir, f"{safe_title}.{ext}")
 
             # Download direto da stream URL com requests
             import requests
@@ -844,7 +857,7 @@ class YouTubeScraper:
                 "User-Agent": random.choice(self._user_agents),
                 "Accept": "*/*",
             }
-            
+
             # Usa proxy se configurado
             proxies = {}
             if "proxy" in self._common_opts:

@@ -116,14 +116,30 @@ def download():
     if not url:
         return jsonify({"error": "Parâmetro 'url' é obrigatório"}), 400
 
+    format = request.args.get("format", "mp3").strip().lower()
+    if format not in ["mp3", "original"]:
+        return jsonify({"error": "Formato deve ser 'mp3' ou 'original'"}), 400
+
     try:
-        filepath = scraper.download_audio(url)
+        filepath = scraper.download_audio(url, format=format)
         filename = Path(filepath).name
+
+        # Determina mimetype baseado no formato
+        if format == "original":
+            if filepath.endswith(".webm"):
+                mimetype = "audio/webm"
+            elif filepath.endswith(".m4a"):
+                mimetype = "audio/mp4"
+            else:
+                mimetype = "audio/webm"
+        else:
+            mimetype = "audio/mpeg"
+
         return send_file(
             filepath,
             as_attachment=True,
             download_name=filename,
-            mimetype="audio/mpeg",
+            mimetype=mimetype,
         )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
