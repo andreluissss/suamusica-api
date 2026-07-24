@@ -1515,13 +1515,13 @@ class YouTubeScraper:
         Returns:
             Tupla (url_stream, titulo)
         """
-        # Cache
-        cache_key = compute_cache_key("stream", url)
-        cached = self._stream_cache.get(cache_key)
-        if cached:
-            return cached
+        # Cache desabilitado temporariamente para forçar URLs frescas
+        # cache_key = compute_cache_key("stream", url)
+        # cached = self._stream_cache.get(cache_key)
+        # if cached:
+        #     return cached
 
-        info = self.extract_info(url, use_cache=True)
+        info = self.extract_info(url, use_cache=False)
         title = info.get("title", "Sem título")
 
         audio_formats = info.get("audio_formats", [])
