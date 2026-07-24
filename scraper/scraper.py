@@ -1030,13 +1030,13 @@ class YouTubeScraper:
         Returns:
             Dicionário com metadados e formatos
         """
-        # Cache
-        if use_cache:
-            cache_key = compute_cache_key("info", url)
-            cached = self._info_cache.get(cache_key)
-            if cached:
-                logger.debug(f"Cache hit para {url[:50]}...")
-                return cached
+        # Cache desabilitado temporariamente para debug
+        # if use_cache:
+        #     cache_key = compute_cache_key("info", url)
+        #     cached = self._info_cache.get(cache_key)
+        #     if cached:
+        #         logger.debug(f"Cache hit para {url[:50]}...")
+        #         return cached
 
         self._apply_rate_limit()
         self._rotate_headers()
