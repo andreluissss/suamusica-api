@@ -1526,7 +1526,7 @@ class YouTubeScraper:
 
         # Usa yt-dlp diretamente com formato de áudio específico
         opts = dict(self._common_opts)
-        opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+        opts["format"] = "bestaudio"
         opts["quiet"] = True
         opts["no_warnings"] = True
 
@@ -1539,17 +1539,21 @@ class YouTubeScraper:
                 info = ydl.extract_info(url, download=False)
                 title = info.get("title", "Sem título")
 
-                # Tenta obter URL do formato selecionado
-                stream_url = info.get("url", "")
-                if stream_url and "youtube.com/watch" not in stream_url:
-                    result = (stream_url, title)
-                    # self._stream_cache.set(cache_key, result)
-                    return result
-
-                # Se não tiver URL direta, procura em formats
+                # Procura em formats por áudio puro
                 formats = info.get("formats", [])
                 for f in formats:
-                    if f.get("vcodec") == "none" and f.get("acodec") not in (None, "none"):
+                    vcodec = f.get("vcodec", "none")
+                    acodec = f.get("acodec", "none")
+                    if vcodec == "none" and acodec not in (None, "none"):
+                        url = f.get("url", "")
+                        if url and "youtube.com/watch" not in url:
+                            result = (url, title)
+                            # self._stream_cache.set(cache_key, result)
+                            return result
+
+                # Fallback: qualquer formato com áudio
+                for f in formats:
+                    if f.get("acodec") not in (None, "none"):
                         url = f.get("url", "")
                         if url and "youtube.com/watch" not in url:
                             result = (url, title)
