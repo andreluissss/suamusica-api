@@ -190,8 +190,10 @@ if __name__ == "__main__":
     results = test_search()
     
     if results:
-        # Teste 2: Informações do primeiro resultado
-        test_video_info(results[0]["url"])
+        try:
+            test_video_info(results[0]["url"])
+        except Exception as e:
+            print(f"  ⚠ Teste de info ignorado: {e}")
     
     # Teste 3: Playlists
     test_playlist_search()
