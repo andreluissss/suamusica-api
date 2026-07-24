@@ -2,8 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Instala ffmpeg (necessário para yt-dlp processar áudio)
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# Instala ffmpeg e nodejs (necessários para yt-dlp processar áudio e resolver assinaturas)
+RUN apt-get update && apt-get install -y ffmpeg nodejs && rm -rf /var/lib/apt/lists/*
 
 # Copia os arquivos do projeto
 COPY scraper/ ./scraper/
