@@ -1128,6 +1128,7 @@ class YouTubeScraper:
         """Normaliza resultado do yt-dlp."""
         # Extrai formatos
         raw_formats = info.get("formats", [])
+        logger.info(f"Raw formats count: {len(raw_formats)}")
         format_infos: List[FormatInfo] = []
         audio_formats: List[FormatInfo] = []
         video_formats: List[FormatInfo] = []
@@ -1177,6 +1178,8 @@ class YouTubeScraper:
                 audio_formats.append(fi)
             if is_video:
                 video_formats.append(fi)
+
+        logger.info(f"Audio formats count: {len(audio_formats)}")
 
         # Melhor áudio
         best_audio = max(audio_formats, key=lambda f: f.abr or 0) if audio_formats else None
