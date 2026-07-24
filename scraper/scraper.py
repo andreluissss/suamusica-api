@@ -1527,6 +1527,11 @@ class YouTubeScraper:
             "no_warnings": True,
             "format": "bestaudio",
             "extract_flat": False,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios"],
+                }
+            },
         }
 
         # Adiciona proxy se disponível
@@ -1534,16 +1539,11 @@ class YouTubeScraper:
         if proxy:
             opts["proxy"] = proxy
 
-        # Adiciona cookies se disponíveis
-        if "cookiesfrombrowser" in self._cookies_opts:
-            opts["cookiesfrombrowser"] = self._cookies_opts["cookiesfrombrowser"]
-        if "cookiefile" in self._cookies_opts:
-            opts["cookiefile"] = self._cookies_opts["cookiefile"]
-
         try:
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 title = info.get("title", "Sem título")
+                logger.info(f"yt-dlp extract_info retornou {len(info.get('formats', []))} formatos")
 
                 # Procura em formats por áudio puro
                 formats = info.get("formats", [])
@@ -1551,19 +1551,22 @@ class YouTubeScraper:
                     vcodec = f.get("vcodec", "none")
                     acodec = f.get("acodec", "none")
                     if vcodec == "none" and acodec not in (None, "none"):
-                        url = f.get("url", "")
-                        if url and "youtube.com/watch" not in url:
-                            return (url, title)
+                        stream_url = f.get("url", "")
+                        if stream_url and "youtube.com/watch" not in stream_url:
+                            logger.info(f"Stream URL encontrada: {stream_url[:50]}...")
+                            return (stream_url, title)
 
                 # Fallback: qualquer formato com áudio
                 for f in formats:
                     if f.get("acodec") not in (None, "none"):
-                        url = f.get("url", "")
-                        if url and "youtube.com/watch" not in url:
-                            return (url, title)
+                        stream_url = f.get("url", "")
+                        if stream_url and "youtube.com/watch" not in stream_url:
+                            logger.info(f"Stream URL fallback encontrada: {stream_url[:50]}...")
+                            return (stream_url, title)
 
                 raise Exception("URL de stream de áudio não disponível")
         except Exception as e:
+            logger.error(f"Erro ao obter stream: {str(e)[:200]}")
             raise Exception(f"Erro ao obter stream: {str(e)[:100]}")
 
     # ──────────────────────────────────────────────────────────────
