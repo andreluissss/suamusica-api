@@ -459,6 +459,7 @@ class YouTubeScraper:
             "retries": 2,
             "skip_unavailable_fragments": True,
             "socket_timeout": self.LAYER1_TIMEOUT,
+            "js_runtimes": ["node"],
         }
         # Aplica cookies
         opts.update(self._cookies_opts)
