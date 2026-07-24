@@ -1580,7 +1580,7 @@ class YouTubeScraper:
                 results = self._parse_search_results(info["entries"])
         except Exception as e:
             logger.warning(f"Search falhou, tentando fallback: {e}")
-            # Fallback: tenta sem headers
+            # Fallback 1: tenta sem headers e com cliente específico
             try:
                 fallback_opts = {
                     "quiet": True,
@@ -1596,10 +1596,232 @@ class YouTubeScraper:
                 if info and "entries" in info:
                     results = self._parse_search_results(info["entries"])
             except Exception as e2:
-                raise Exception(f"Erro na busca: {e2}")
+                logger.warning(f"Search fallback 1 falhou: {e2}")
+                # Fallback 2: scraping direto da página HTML do YouTube
+                try:
+                    results = self._search_fallback_html(query, max_results)
+                except Exception as e3:
+                    raise Exception(f"Erro na busca: {e3}")
 
         self._search_cache.set(cache_key, results)
         return results
+
+    def _search_fallback_html(self, query: str, max_results: int = 10) -> List[Dict]:
+        """
+        Fallback de busca via scraping direto da página HTML do YouTube.
+        Extrai ytInitialData do HTML e parseia os resultados de busca.
+        """
+        import urllib.parse
+
+        search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
+        logger.info(f"Search fallback HTML: {search_url}")
+
+        self._apply_rate_limit()
+        self._rotate_headers()
+
+        headers = dict(self._current_headers)
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+        resp = requests.get(
+            search_url,
+            headers=headers,
+            timeout=self.LAYER2_TIMEOUT,
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+        html = resp.text
+
+        # Extrai ytInitialData do HTML
+        initial_data = self._extract_json_from_html(
+            html, r'ytInitialData\s*=\s*({.*?});'
+        )
+
+        if not initial_data:
+            # Tenta padrão alternativo
+            initial_data = self._extract_json_from_html(
+                html, r'window\[["\']ytInitialData["\']\]\s*=\s*({.*?});'
+            )
+
+        if not initial_data:
+            logger.warning("ytInitialData não encontrado no HTML de busca")
+            return []
+
+        return self._parse_search_html_results(initial_data, max_results)
+
+    def _parse_search_html_results(self, data: Dict, max_results: int) -> List[Dict]:
+        """
+        Parseia resultados de busca do ytInitialData extraído do HTML.
+        """
+        results = []
+
+        try:
+            # Navega pela estrutura do ytInitialData para encontrar resultados
+            contents = (
+                data.get("contents", {})
+                .get("twoColumnSearchResultsRenderer", {})
+                .get("primaryContents", {})
+                .get("sectionListRenderer", {})
+                .get("contents", [])
+            )
+
+            for section in contents:
+                item_section = section.get("itemSectionRenderer", {})
+                items = item_section.get("contents", [])
+
+                for item in items:
+                    if len(results) >= max_results:
+                        break
+
+                    # Video renderer
+                    video_renderer = item.get("videoRenderer", {})
+                    if video_renderer:
+                        video_id = video_renderer.get("videoId", "")
+                        if not video_id:
+                            continue
+
+                        # Título
+                        title_obj = video_renderer.get("title", {})
+                        title = ""
+                        for run in title_obj.get("runs", []):
+                            title += run.get("text", "")
+                        if not title:
+                            title = title_obj.get("simpleText", "Sem título")
+
+                        # Canal
+                        channel_renderer = (
+                            video_renderer.get("ownerText", {})
+                            .get("runs", [{}])[0]
+                        )
+                        channel = channel_renderer.get("text", "Desconhecido")
+
+                        # Duração
+                        duration_str = ""
+                        duration_seconds = 0
+                        length_section = video_renderer.get("lengthText", {})
+                        if length_section:
+                            duration_str = length_section.get("simpleText", "")
+                            # Converte "5:30" para segundos
+                            try:
+                                parts = duration_str.split(":")
+                                if len(parts) == 2:
+                                    duration_seconds = int(parts[0]) * 60 + int(parts[1])
+                                elif len(parts) == 3:
+                                    duration_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                            except (ValueError, IndexError):
+                                duration_seconds = 0
+
+                        # Views
+                        view_count = 0
+                        view_section = video_renderer.get("viewCountText", {})
+                        if view_section:
+                            view_text = view_section.get("simpleText", "") or ""
+                            for run in view_section.get("runs", []):
+                                view_text += run.get("text", "")
+                            # Extrai números do texto (ex: "1.234.567 visualizações")
+                            view_match = re.search(r'[\d.]+', view_text.replace(".", ""))
+                            if view_match:
+                                try:
+                                    view_count = int(view_match.group(0))
+                                except ValueError:
+                                    view_count = 0
+
+                        # Thumbnail
+                        thumbnail = ""
+                        thumb_renderer = video_renderer.get("thumbnail", {})
+                        thumbnails = thumb_renderer.get("thumbnails", [])
+                        if thumbnails:
+                            # Pega a de maior resolução
+                            thumbnail = thumbnails[-1].get("url", "")
+                        if not thumbnail:
+                            thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+
+                        # Badges (live, etc)
+                        is_live = False
+                        badges = video_renderer.get("badges", [])
+                        for badge in badges:
+                            badge_text = (
+                                badge.get("metadataBadgeRenderer", {})
+                                .get("label", "")
+                            )
+                            if "LIVE" in badge_text.upper():
+                                is_live = True
+
+                        video = {
+                            "id": video_id,
+                            "title": title,
+                            "channel": channel,
+                            "duration": self._format_duration(duration_seconds),
+                            "duration_seconds": duration_seconds,
+                            "views": view_count,
+                            "type": "video",
+                            "url": f"https://www.youtube.com/watch?v={video_id}",
+                            "thumbnail": thumbnail,
+                            "is_live": is_live,
+                        }
+                        results.append(video)
+                        continue
+
+                    # Playlist renderer
+                    playlist_renderer = item.get("playlistRenderer", {})
+                    if playlist_renderer:
+                        playlist_id = playlist_renderer.get("playlistId", "")
+                        if not playlist_id:
+                            continue
+
+                        # Título
+                        title_obj = playlist_renderer.get("title", {})
+                        title = ""
+                        for run in title_obj.get("runs", []):
+                            title += run.get("text", "")
+                        if not title:
+                            title = title_obj.get("simpleText", "Playlist sem nome")
+
+                        # Canal
+                        channel_text = ""
+                        channel_runs = (
+                            playlist_renderer.get("shortBylineText", {})
+                            .get("runs", [])
+                        )
+                        for run in channel_runs:
+                            channel_text += run.get("text", "")
+                        channel = channel_text or "Desconhecido"
+
+                        # Thumbnail
+                        thumbnail = ""
+                        thumb_renderer = playlist_renderer.get("thumbnail", {})
+                        thumbnails = thumb_renderer.get("thumbnails", [])
+                        if thumbnails:
+                            thumbnail = thumbnails[-1].get("url", "")
+
+                        # Número de vídeos
+                        video_count = 0
+                        video_count_str = (
+                            playlist_renderer.get("videoCount", "")
+                            or playlist_renderer.get("videoCountText", {}).get("runs", [{}])[0].get("text", "0")
+                        )
+                        try:
+                            video_count = int(re.sub(r'\D', '', str(video_count_str)))
+                        except ValueError:
+                            video_count = 0
+
+                        playlist = {
+                            "id": playlist_id,
+                            "title": title,
+                            "channel": channel,
+                            "duration": f"{video_count} vídeos",
+                            "duration_seconds": 0,
+                            "views": 0,
+                            "type": "playlist",
+                            "url": f"https://www.youtube.com/playlist?list={playlist_id}",
+                            "thumbnail": thumbnail,
+                            "video_count": video_count,
+                        }
+                        results.append(playlist)
+
+        except Exception as e:
+            logger.warning(f"Erro ao parsear resultados HTML: {e}")
+
+        return results[:max_results]
 
     def _parse_search_results(self, entries: List) -> List[Dict]:
         """Parseia resultados da busca."""
