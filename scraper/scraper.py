@@ -1526,6 +1526,17 @@ class YouTubeScraper:
 
         audio_formats = info.get("audio_formats", [])
         if not audio_formats:
+            # Fallback: tenta usar formatos que têm áudio
+            all_formats = info.get("formats", [])
+            audio_formats = [f for f in all_formats if f.get("has_audio", False)]
+
+        if not audio_formats:
+            # Fallback: usa URL direta do info
+            direct_url = info.get("url", "")
+            if direct_url:
+                result = (direct_url, title)
+                self._stream_cache.set(cache_key, result)
+                return result
             raise Exception("Nenhum formato de áudio disponível")
 
         best = max(audio_formats, key=lambda f: f.get("abr", 0) or 0)
