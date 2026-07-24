@@ -1510,7 +1510,7 @@ class YouTubeScraper:
 
     def get_audio_stream_url(self, url: str) -> Tuple[str, str]:
         """
-        Obtém URL direta da melhor stream de áudio.
+        Obtém URL direta da melhor stream de áudio usando yt-dlp diretamente.
 
         Returns:
             Tupla (url_stream, titulo)
@@ -1521,26 +1521,44 @@ class YouTubeScraper:
         # if cached:
         #     return cached
 
-        info = self.extract_info(url, use_cache=False)
-        title = info.get("title", "Sem título")
+        self._apply_rate_limit()
+        self._rotate_headers()
 
-        audio_formats = info.get("audio_formats", [])
-        if not audio_formats:
-            # Fallback: tenta usar formatos que têm áudio
-            all_formats = info.get("formats", [])
-            audio_formats = [f for f in all_formats if f.get("has_audio", False)]
+        # Usa yt-dlp diretamente com formato de áudio específico
+        opts = dict(self._common_opts)
+        opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+        opts["quiet"] = True
+        opts["no_warnings"] = True
 
-        if not audio_formats:
-            raise Exception("Nenhum formato de áudio disponível")
+        proxy = self._proxy_pool.get_proxy()
+        if proxy:
+            opts["proxy"] = proxy
 
-        best = max(audio_formats, key=lambda f: f.get("abr", 0) or 0)
-        stream_url = best.get("url", "")
-        if not stream_url or "youtube.com/watch" in stream_url:
-            raise Exception("URL de stream de áudio não disponível")
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get("title", "Sem título")
 
-        result = (stream_url, title)
-        self._stream_cache.set(cache_key, result)
-        return result
+                # Tenta obter URL do formato selecionado
+                stream_url = info.get("url", "")
+                if stream_url and "youtube.com/watch" not in stream_url:
+                    result = (stream_url, title)
+                    # self._stream_cache.set(cache_key, result)
+                    return result
+
+                # Se não tiver URL direta, procura em formats
+                formats = info.get("formats", [])
+                for f in formats:
+                    if f.get("vcodec") == "none" and f.get("acodec") not in (None, "none"):
+                        url = f.get("url", "")
+                        if url and "youtube.com/watch" not in url:
+                            result = (url, title)
+                            # self._stream_cache.set(cache_key, result)
+                            return result
+
+                raise Exception("URL de stream de áudio não disponível")
+        except Exception as e:
+            raise Exception(f"Erro ao obter stream: {str(e)[:100]}")
 
     # ──────────────────────────────────────────────────────────────
     # Search
