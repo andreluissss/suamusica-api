@@ -1082,8 +1082,9 @@ class YouTubeScraper:
         """
         Normaliza o resultado de qualquer camada para formato padronizado.
         """
-        # Se já veio normalizado (mobile/emergency)
-        if "formats" in raw and isinstance(raw.get("formats"), list):
+        # Se já veio normalizado (mobile/emergency) - tem audio_formats como lista
+        if ("audio_formats" in raw and isinstance(raw.get("audio_formats"), list)
+                and "formats" in raw and isinstance(raw.get("formats"), list)):
             # Converte FormatInfo objects para dict se necessário
             formats = raw.get("formats", [])
             audio_formats = raw.get("audio_formats", [])
