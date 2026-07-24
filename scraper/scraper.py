@@ -1515,24 +1515,27 @@ class YouTubeScraper:
         Returns:
             Tupla (url_stream, titulo)
         """
-        # Cache desabilitado temporariamente para forçar URLs frescas
-        # cache_key = compute_cache_key("stream", url)
-        # cached = self._stream_cache.get(cache_key)
-        # if cached:
-        #     return cached
-
         self._apply_rate_limit()
         self._rotate_headers()
 
         # Usa yt-dlp diretamente com formato de áudio específico
-        opts = dict(self._common_opts)
-        opts["format"] = "bestaudio"
-        opts["quiet"] = True
-        opts["no_warnings"] = True
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "bestaudio",
+            "extract_flat": False,
+        }
 
+        # Adiciona proxy se disponível
         proxy = self._proxy_pool.get_proxy()
         if proxy:
             opts["proxy"] = proxy
+
+        # Adiciona cookies se disponíveis
+        if "cookiesfrombrowser" in self._cookies_opts:
+            opts["cookiesfrombrowser"] = self._cookies_opts["cookiesfrombrowser"]
+        if "cookiefile" in self._cookies_opts:
+            opts["cookiefile"] = self._cookies_opts["cookiefile"]
 
         try:
             with YoutubeDL(opts) as ydl:
@@ -1547,18 +1550,14 @@ class YouTubeScraper:
                     if vcodec == "none" and acodec not in (None, "none"):
                         url = f.get("url", "")
                         if url and "youtube.com/watch" not in url:
-                            result = (url, title)
-                            # self._stream_cache.set(cache_key, result)
-                            return result
+                            return (url, title)
 
                 # Fallback: qualquer formato com áudio
                 for f in formats:
                     if f.get("acodec") not in (None, "none"):
                         url = f.get("url", "")
                         if url and "youtube.com/watch" not in url:
-                            result = (url, title)
-                            # self._stream_cache.set(cache_key, result)
-                            return result
+                            return (url, title)
 
                 raise Exception("URL de stream de áudio não disponível")
         except Exception as e:
