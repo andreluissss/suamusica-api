@@ -1518,26 +1518,13 @@ class YouTubeScraper:
         Returns:
             Tupla (url_stream, titulo)
         """
-        self._apply_rate_limit()
-        self._rotate_headers()
-
-        # Usa yt-dlp diretamente com formato de áudio específico
+        # Usa yt-dlp com configuração mínima
         opts = {
             "quiet": True,
             "no_warnings": True,
             "format": "bestaudio",
             "extract_flat": False,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios"],
-                }
-            },
         }
-
-        # Adiciona proxy se disponível
-        proxy = self._proxy_pool.get_proxy()
-        if proxy:
-            opts["proxy"] = proxy
 
         try:
             with YoutubeDL(opts) as ydl:
