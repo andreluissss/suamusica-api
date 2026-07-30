@@ -56,7 +56,7 @@ class YouTubeScraper:
         """Retorna opções do yt-dlp com configurações anti-bot"""
         opts = base_opts.copy() if base_opts else {}
         
-        # Adiciona configurações anti-bot
+        # Adiciona configurações anti-bot avançadas
         opts.update({
             'user_agent': self.user_agent,
             'http_headers': self.headers,
@@ -64,6 +64,16 @@ class YouTubeScraper:
             'ignoreerrors': True,  # Continua mesmo com erros
             'quiet': True,
             'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': 'android',
+                    'player_skip': ['configs', 'webpage', 'js'],
+                }
+            },
+            'extractor_retries': 3,  # Tenta 3 vezes antes de falhar
+            'fragment_retries': 3,
+            'retries': 3,
+            'socket_timeout': 30,  # Timeout de 30 segundos
         })
         
         # Adiciona cookies se arquivo existir
