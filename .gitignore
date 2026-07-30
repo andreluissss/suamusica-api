@@ -1,39 +1,33 @@
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
+*$py.class
+*.so
+.Python
 .venv/
 venv/
-env/
+ENV/
+
+# Environment
+.env
+
+# Downloads
+downloads/
+temp_downloads/
+test_download/
+
+# HTML files (debug)
+*.html
+
+# Debug files
+debug_*.py
+test_*.py
+analyze_*.py
 
 # IDE
 .vscode/
 .idea/
 
-# Environment
-.env
-.env.local
-
 # OS
 .DS_Store
 Thumbs.db
-
-# Test files (keep only the API)
-test_*.py
-debug_*.py
-analyze_*.py
-check_*.py
-contar_*.py
-fix_*.py
-make_*.py
-run_*.py
-tudo.py
-*.html
-*.js
-*.sql
-*.json
-!railway.json
-!requirements_api.txt
-
-# Logs
-*.log
