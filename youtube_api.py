@@ -54,26 +54,29 @@ class YouTubeAPI:
             'http_headers': self.headers,
             'nocheckcertificate': True,  # Ignora erros de certificado SSL
             'ignoreerrors': True,  # Continua mesmo com erros
-            'extract_flat': False,
             'quiet': True,
             'no_warnings': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': 'android',
+                    'player_client': ['android', 'ios', 'web'],  # Tenta múltiplos clientes
                     'player_skip': ['configs', 'webpage', 'js'],
                 }
             },
-            'extractor_retries': 3,  # Tenta 3 vezes antes de falhar
-            'fragment_retries': 3,
-            'retries': 3,
-            'socket_timeout': 30,  # Timeout de 30 segundos
+            'extractor_retries': 5,  # Aumenta para 5 tentativas
+            'fragment_retries': 5,
+            'retries': 5,
+            'socket_timeout': 60,  # Aumenta timeout para 60 segundos
+            'geo_bypass': True,  # Bypass restrições geográficas
+            'geo_bypass_country': 'US',  # Usa IP dos EUA
         })
         
-        # Adiciona cookies se arquivo existir
+        # Adiciona cookies se arquivo existir (prioridade alta)
         cookie_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
         if os.path.exists(cookie_file):
             opts['cookiefile'] = cookie_file
-            logger.info(f"Usando cookies de: {cookie_file}")
+            logger.info(f"✅ Usando cookies de: {cookie_file}")
+        else:
+            logger.warning("⚠️ Arquivo de cookies não encontrado - YouTube pode bloquear requisições")
         
         return opts
     
