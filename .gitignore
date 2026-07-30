@@ -11,6 +11,9 @@ ENV/
 # Environment
 .env
 
+# Cookies (sensitive data)
+cookies.txt
+
 # Downloads
 downloads/
 temp_downloads/

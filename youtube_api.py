@@ -28,15 +28,49 @@ class YouTubeAPI:
     def __init__(self):
         self.download_dir = 'temp_downloads'
         os.makedirs(self.download_dir, exist_ok=True)
+        
+        # Configurações anti-bot para simular navegador real
+        self.user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        self.headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+        }
+    
+    def _get_ydl_opts(self, base_opts=None):
+        """Retorna opções do yt-dlp com configurações anti-bot"""
+        opts = base_opts.copy() if base_opts else {}
+        
+        # Adiciona configurações anti-bot
+        opts.update({
+            'user_agent': self.user_agent,
+            'http_headers': self.headers,
+            'nocheckcertificate': True,  # Ignora erros de certificado SSL
+            'ignoreerrors': True,  # Continua mesmo com erros
+            'extract_flat': False,
+            'quiet': True,
+            'no_warnings': True,
+        })
+        
+        # Adiciona cookies se arquivo existir
+        cookie_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+        if os.path.exists(cookie_file):
+            opts['cookiefile'] = cookie_file
+            logger.info(f"Usando cookies de: {cookie_file}")
+        
+        return opts
     
     def search_music(self, query: str, limit: int = 10):
         """Pesquisa músicas no YouTube"""
         search_query = f"ytsearch{limit}:{query}"
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-        }
+        ydl_opts = self._get_ydl_opts()
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -63,11 +97,7 @@ class YouTubeAPI:
     
     def get_stream_url(self, url: str):
         """Obtém URL de stream de áudio"""
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'format': 'bestaudio/best',
-        }
+        ydl_opts = self._get_ydl_opts({'format': 'bestaudio/best'})
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -85,9 +115,7 @@ class YouTubeAPI:
     
     def download_audio(self, url: str):
         """Baixa áudio e retorna o arquivo"""
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
+        ydl_opts = self._get_ydl_opts({
             'format': 'bestaudio/best',
             'outtmpl': f'{self.download_dir}/%(id)s.%(ext)s',
             'postprocessors': [{
@@ -95,7 +123,7 @@ class YouTubeAPI:
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-        }
+        })
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

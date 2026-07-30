@@ -36,14 +36,47 @@ class YouTubeScraper:
         
         self.supabase: Client = create_client(supabase_url, supabase_key)
         self.processed_video_ids = set()
+        
+        # Configurações anti-bot para simular navegador real
+        self.user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        self.headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+        }
+    
+    def _get_ydl_opts(self, base_opts=None):
+        """Retorna opções do yt-dlp com configurações anti-bot"""
+        opts = base_opts.copy() if base_opts else {}
+        
+        # Adiciona configurações anti-bot
+        opts.update({
+            'user_agent': self.user_agent,
+            'http_headers': self.headers,
+            'nocheckcertificate': True,  # Ignora erros de certificado SSL
+            'ignoreerrors': True,  # Continua mesmo com erros
+            'quiet': True,
+            'no_warnings': True,
+        })
+        
+        # Adiciona cookies se arquivo existir
+        cookie_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+        if os.path.exists(cookie_file):
+            opts['cookiefile'] = cookie_file
+            logger.info(f"Usando cookies de: {cookie_file}")
+        
+        return opts
 
     def _extract_video_info(self, url: str) -> Optional[Dict]:
         """Extrai metadados de um vídeo específico"""
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-        }
+        ydl_opts = self._get_ydl_opts({'extract_flat': False})
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -74,11 +107,7 @@ class YouTubeScraper:
 
     def get_audio_stream_url(self, url: str) -> Optional[str]:
         """Retorna URL de stream de áudio de um vídeo"""
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'format': 'bestaudio/best',
-        }
+        ydl_opts = self._get_ydl_opts({'format': 'bestaudio/best'})
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -103,9 +132,7 @@ class YouTubeScraper:
         # Cria diretório se não existir
         os.makedirs(output_path, exist_ok=True)
         
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
+        ydl_opts = self._get_ydl_opts({
             'format': 'bestaudio/best',
             'outtmpl': f'{output_path}/%(title)s.%(ext)s',
             'postprocessors': [{
@@ -113,7 +140,7 @@ class YouTubeScraper:
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-        }
+        })
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
