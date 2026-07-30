@@ -5,4 +5,4 @@
 apt-get update && apt-get install -y ffmpeg
 
 # Instala dependências Python
-pip install -r requirements_api.txt
+pip install -r requirements.txt
